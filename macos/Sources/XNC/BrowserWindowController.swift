@@ -266,27 +266,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     func syncSearchPlaceholder() {
-        let searx = appDelegate.store.searchEngineURL
-        if searx.isEmpty {
+        let eff = appDelegate.effectiveSearchEngineURL
+        if eff.isEmpty {
             addressField.placeholderString = "Search DuckDuckGo or enter URL"
+        } else if eff == appDelegate.localSearXNG.baseURL {
+            let status = appDelegate.localSearXNG.isReady ? "Local" : "Starting…"
+            addressField.placeholderString = "Search SearXNG (\(status)) or enter URL"
         } else {
-            let host = URLResolver.displayHost(for: URLResolver.homeURL(searchBaseURL: searx))
+            let host = URLResolver.displayHost(for: URLResolver.homeURL(searchBaseURL: eff))
             addressField.placeholderString = "Search SearXNG (\(host)) or enter URL"
+        }
+    }
+
+    func refreshNewTabSearchState() {
+        for tab in tabs where ContentBlockerRules.isNewTabURL(tab.webView.url) {
+            tab.syncNewTabState()
         }
     }
 
     func configureSearchEngine() {
         let alert = NSAlert()
         alert.messageText = "Custom SearXNG Search Engine"
-        alert.informativeText = "Enter your SearXNG base URL (e.g. https://searx.example.com or http://localhost:8080) or leave blank for DuckDuckGo:"
+        alert.informativeText = "Leave blank to use XNC's built-in SearXNG, enter a custom URL, or switch to DuckDuckGo:"
         alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Use Local :8080")
-        alert.addButton(withTitle: "Reset to DuckDuckGo")
+        alert.addButton(withTitle: "Bundled SearXNG")
+        alert.addButton(withTitle: "DuckDuckGo")
         alert.addButton(withTitle: "Cancel")
 
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        input.placeholderString = "https://searx.example.com"
-        input.stringValue = appDelegate.store.searchEngineURL
+        input.placeholderString = appDelegate.localSearXNG.baseURL.isEmpty ? "http://localhost:8080" : appDelegate.localSearXNG.baseURL
+        input.stringValue = appDelegate.store.searchEngineURL == "duckduckgo" ? "" : appDelegate.store.searchEngineURL
         alert.accessoryView = input
 
         let response = alert.runModal()
@@ -294,15 +303,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case .alertFirstButtonReturn:
             appDelegate.store.setSearchEngineURL(input.stringValue)
         case .alertSecondButtonReturn:
-            appDelegate.store.setSearchEngineURL("http://localhost:8080")
-        case .alertThirdButtonReturn:
             appDelegate.store.setSearchEngineURL("")
+        case .alertThirdButtonReturn:
+            appDelegate.store.setSearchEngineURL("duckduckgo")
         default:
             return
         }
 
         appDelegate.refreshSearchEngineUI()
-        currentTab?.load(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL))
     }
 
     func showJSConsole() {
@@ -788,9 +796,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let menu = NSMenu()
         let store = appDelegate.store
 
-        let searxLabel = store.searchEngineURL.isEmpty
-            ? "Search Engine: DuckDuckGo (Set SearXNG…)"
-            : "Search Engine: \(store.searchEngineURL)…"
+        let searxLabel: String
+        let cfg = store.searchEngineURL
+        if cfg == "duckduckgo" {
+            searxLabel = "Search Engine: DuckDuckGo (Set SearXNG…)"
+        } else if !cfg.isEmpty {
+            searxLabel = "Search Engine: \(cfg)…"
+        } else if !appDelegate.localSearXNG.baseURL.isEmpty {
+            searxLabel = "Search Engine: Bundled SearXNG…"
+        } else {
+            searxLabel = "Search Engine: DuckDuckGo (Set SearXNG…)"
+        }
         let searxItem = NSMenuItem(title: searxLabel, action: #selector(handleConfigureSearch), keyEquivalent: "")
         searxItem.target = self
         menu.addItem(searxItem)
@@ -861,7 +877,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            let url = URLResolver.resolve(addressField.stringValue, searchBaseURL: appDelegate.store.searchEngineURL)
+            let url = URLResolver.resolve(addressField.stringValue, searchBaseURL: appDelegate.effectiveSearchEngineURL)
             currentTab?.load(url: url)
             window?.makeFirstResponder(currentTab?.webView)
             return true
@@ -870,6 +886,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     // MARK: - TabViewControllerDelegate
+
+    var effectiveSearchEngineURL: String { appDelegate.effectiveSearchEngineURL }
+    var bundledSearchEngineURL: String { appDelegate.localSearXNG.baseURL }
+    var isBundledSearchReady: Bool { appDelegate.localSearXNG.isReady }
 
     func tabDidUpdate(_ tab: TabViewController) {
         rebuildTabBar()
@@ -895,7 +915,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         switch type {
         case "navigate":
             let raw = (payload["input"] as? String) ?? ""
-            let url = URLResolver.resolve(raw, searchBaseURL: appDelegate.store.searchEngineURL)
+            let url = URLResolver.resolve(raw, searchBaseURL: appDelegate.effectiveSearchEngineURL)
             tab.load(url: url)
         case "setSearxng":
             let raw = (payload["url"] as? String) ?? ""

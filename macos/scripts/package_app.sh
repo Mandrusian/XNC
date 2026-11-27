@@ -41,6 +41,15 @@ if [[ -f "$REPO_ROOT/shared/XNC.icns" ]]; then
   cp "$REPO_ROOT/shared/XNC.icns" "$APP_DIR/Contents/Resources/XNC.icns"
 fi
 
+if [[ "${XNC_BUNDLE_SEARXNG:-0}" == "1" ]] && [[ ! -d "$MACOS_DIR/searxng-runtime" ]]; then
+  "$REPO_ROOT/scripts/bundle-searxng-macos.sh" "$MACOS_DIR/searxng-runtime"
+fi
+if [[ -d "$MACOS_DIR/searxng-runtime" ]]; then
+  echo "Bundling SearXNG runtime into $APP_DIR/Contents/Resources/searxng-runtime..."
+  ditto "$MACOS_DIR/searxng-runtime" "$APP_DIR/Contents/Resources/searxng-runtime"
+  cp "$REPO_ROOT/shared/run_searxng.py" "$APP_DIR/Contents/Resources/searxng-runtime/run_searxng.py"
+fi
+
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

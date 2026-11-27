@@ -2,6 +2,8 @@
 #include "xnc/storage.hpp"
 #include "xnc/url_resolver.hpp"
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -13,12 +15,14 @@
 #include <WebView2.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace Gdiplus {
@@ -50,6 +54,7 @@ namespace {
 
 constexpr int kAppIconId = 101;
 constexpr int kIdAddressEdit = 108;
+constexpr UINT kWmAppSearxReady = WM_APP + 12;
 
 constexpr UINT_PTR kCmdBookmarkBase = 2000;
 constexpr UINT_PTR kCmdHistoryBase = 3000;
@@ -284,6 +289,12 @@ struct AppState {
     bool tracking_mouse = false;
     bool is_fullscreen = false;
     WINDOWPLACEMENT prev_placement{sizeof(WINDOWPLACEMENT)};
+
+    HANDLE searxng_job = nullptr;
+    PROCESS_INFORMATION searxng_pi{};
+    std::string bundled_searxng_url;
+    bool searxng_ready = false;
+    std::atomic<bool> shutting_down{false};
 };
 
 AppState g_app;
@@ -296,6 +307,13 @@ int tab_strip_height() { return g_app.is_fullscreen ? 0 : px(38); }
 int toolbar_height() { return g_app.is_fullscreen ? 0 : px(38); }
 int chrome_height() { return g_app.is_fullscreen ? 0 : (tab_strip_height() + toolbar_height() + px(2)); }
 
+std::string effective_search_engine_url() {
+    std::string cfg = g_app.store.search_engine_url();
+    if (cfg == "duckduckgo") return {};
+    if (!cfg.empty()) return cfg;
+    return g_app.bundled_searxng_url;
+}
+
 bool is_newtab_url(const std::string& url) {
     return url.find("xnc.local/newtab.html") != std::string::npos || url == "about:newtab";
 }
@@ -304,7 +322,139 @@ std::string default_newtab_url() {
     if (!find_shared_file("newtab.html").empty()) {
         return "https://xnc.local/newtab.html";
     }
-    return xnc::home_url_for_search_engine(g_app.store.search_engine_url());
+    return xnc::home_url_for_search_engine(effective_search_engine_url());
+}
+
+bool is_loopback_port_free(unsigned short port) {
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return false;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    int res = bind(sock, reinterpret_cast<const sockaddr*>(&addr), static_cast<int>(sizeof(addr)));
+    closesocket(sock);
+    return res == 0;
+}
+
+unsigned short pick_free_loopback_port(unsigned short preferred) {
+    if (is_loopback_port_free(preferred)) return preferred;
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET) return preferred;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = 0;
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+    unsigned short chosen = preferred;
+    if (bind(sock, reinterpret_cast<const sockaddr*>(&addr), static_cast<int>(sizeof(addr))) == 0) {
+        int len = static_cast<int>(sizeof(addr));
+        if (getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) == 0) {
+            chosen = ntohs(addr.sin_port);
+        }
+    }
+    closesocket(sock);
+    return chosen;
+}
+
+std::filesystem::path find_searxng_runtime_dir() {
+    std::vector<std::filesystem::path> candidates;
+    wchar_t exe_buf[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, exe_buf, MAX_PATH) > 0) {
+        std::filesystem::path exe_dir = std::filesystem::path(exe_buf).parent_path();
+        candidates.push_back(exe_dir / "searxng-runtime");
+        candidates.push_back(exe_dir / ".." / "searxng-runtime");
+        candidates.push_back(exe_dir / ".." / ".." / "searxng-runtime");
+    }
+    candidates.push_back(std::filesystem::current_path() / "windows" / "searxng-runtime");
+    candidates.push_back(std::filesystem::current_path() / "searxng-runtime");
+    for (const auto& dir : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(dir / "python" / "python.exe", ec) &&
+            std::filesystem::is_regular_file(dir / "run_searxng.py", ec)) {
+            return dir;
+        }
+    }
+    return {};
+}
+
+void start_bundled_searxng() {
+    std::filesystem::path runtime = find_searxng_runtime_dir();
+    if (runtime.empty()) return;
+
+    unsigned short port = pick_free_loopback_port(18888);
+    std::filesystem::path py = runtime / "python" / "python.exe";
+    std::filesystem::path runner = runtime / "run_searxng.py";
+
+    std::filesystem::path data_dir = std::filesystem::temp_directory_path() / "xnc-searxng";
+    wchar_t local_app[MAX_PATH]{};
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local_app, MAX_PATH);
+    if (n > 0 && n < MAX_PATH) {
+        data_dir = std::filesystem::path(local_app) / "XNC" / "searxng";
+    }
+
+    g_app.searxng_job = CreateJobObjectW(nullptr, nullptr);
+    if (g_app.searxng_job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(g_app.searxng_job, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
+    }
+
+    SetEnvironmentVariableW(L"PYTHONNOUSERSITE", L"1");
+    SetEnvironmentVariableW(L"PYTHONDONTWRITEBYTECODE", L"1");
+    SetEnvironmentVariableW(L"PYTHONUTF8", L"1");
+
+    std::wstring cmd = L"\"" + py.wstring() + L"\" \"" + runner.wstring() + L"\" --port " +
+        std::to_wstring(port) + L" --data-dir \"" + data_dir.wstring() + L"\" --parent-pid " +
+        std::to_wstring(GetCurrentProcessId());
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+
+    if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                       runtime.wstring().c_str(), &si, &g_app.searxng_pi)) {
+        if (g_app.searxng_job) {
+            AssignProcessToJobObject(g_app.searxng_job, g_app.searxng_pi.hProcess);
+        }
+        g_app.bundled_searxng_url = "http://127.0.0.1:" + std::to_string(port);
+        HWND hwnd = g_app.hwnd;
+        std::thread([hwnd, port]() {
+            for (int i = 0; i < 80 && !g_app.shutting_down.load(); ++i) {
+                SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if (sock != INVALID_SOCKET) {
+                    sockaddr_in addr{};
+                    addr.sin_family = AF_INET;
+                    addr.sin_port = htons(port);
+                    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+                    bool connected = (connect(sock, reinterpret_cast<const sockaddr*>(&addr), static_cast<int>(sizeof(addr))) == 0);
+                    closesocket(sock);
+                    if (connected) {
+                        if (IsWindow(hwnd)) PostMessageW(hwnd, kWmAppSearxReady, 0, 0);
+                        return;
+                    }
+                }
+                Sleep(250);
+            }
+        }).detach();
+    }
+}
+
+void stop_bundled_searxng() {
+    g_app.shutting_down.store(true);
+    if (g_app.searxng_pi.hProcess) {
+        TerminateProcess(g_app.searxng_pi.hProcess, 0);
+        CloseHandle(g_app.searxng_pi.hProcess);
+        g_app.searxng_pi.hProcess = nullptr;
+    }
+    if (g_app.searxng_pi.hThread) {
+        CloseHandle(g_app.searxng_pi.hThread);
+        g_app.searxng_pi.hThread = nullptr;
+    }
+    if (g_app.searxng_job) {
+        CloseHandle(g_app.searxng_job);
+        g_app.searxng_job = nullptr;
+    }
 }
 
 std::string json_escape(const std::string& in) {
@@ -342,11 +492,14 @@ void invalidate_chrome() {
 
 void sync_search_placeholder() {
     if (!g_app.address_edit) return;
+    std::string eff = effective_search_engine_url();
     std::wstring ph;
-    if (g_app.store.search_engine_url().empty()) {
+    if (eff.empty()) {
         ph = L"Search DuckDuckGo or enter URL";
+    } else if (!g_app.bundled_searxng_url.empty() && eff == g_app.bundled_searxng_url) {
+        ph = g_app.searxng_ready ? L"Search SearXNG (Local) or enter URL" : L"Search SearXNG (Starting...) or enter URL";
     } else {
-        std::string host = xnc::display_host(xnc::home_url_for_search_engine(g_app.store.search_engine_url()));
+        std::string host = xnc::display_host(xnc::home_url_for_search_engine(eff));
         ph = to_wide("Search SearXNG (" + host + ") or enter URL");
     }
     SendMessageW(g_app.address_edit, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(ph.c_str()));
@@ -365,9 +518,13 @@ void inject_cosmetic_and_mica(Tab* tab) {
     }
     if (!tab->webview) return;
 
+    std::string eff = effective_search_engine_url();
     if (is_newtab_url(tab->url)) {
         std::string js = "if (typeof window.__xncApplyState === 'function') window.__xncApplyState({searxngUrl:\""
-            + json_escape(g_app.store.search_engine_url()) + "\",micaEnabled:" + (mica ? "true" : "false") + "});";
+            + json_escape(eff) + "\",configuredSearxngUrl:\"" + json_escape(g_app.store.search_engine_url())
+            + "\",bundledSearxngUrl:\"" + json_escape(g_app.bundled_searxng_url)
+            + "\",searxngReady:" + (g_app.searxng_ready ? "true" : "false")
+            + ",micaEnabled:" + (mica ? "true" : "false") + "});";
         tab->webview->ExecuteScript(to_wide(js).c_str(), nullptr);
         return;
     }
@@ -377,8 +534,8 @@ void inject_cosmetic_and_mica(Tab* tab) {
     std::string cosmetic_css = load_shared_text("cosmetic_rules.css", std::string(xnc::Blocker::default_cosmetic_css()));
     std::string css = xnc::Blocker::build_css_for_host(
         shield_active, g_app.store.custom_selectors(host), cosmetic_css);
-    if (!g_app.store.search_engine_url().empty()) {
-        std::string searx_host = xnc::extract_host(xnc::home_url_for_search_engine(g_app.store.search_engine_url()));
+    if (!eff.empty()) {
+        std::string searx_host = xnc::extract_host(xnc::home_url_for_search_engine(eff));
         if (!searx_host.empty() && host == searx_host) {
             std::string searx_css = load_shared_text("searxng_theme.css", "");
             if (!searx_css.empty()) {
@@ -887,7 +1044,7 @@ void navigate_from_address_bar() {
     if (!tab) return;
     wchar_t buf[4096]{};
     GetWindowTextW(g_app.address_edit, buf, 4096);
-    std::string target = xnc::resolve_input(to_utf8(buf), g_app.store.search_engine_url());
+    std::string target = xnc::resolve_input(to_utf8(buf), effective_search_engine_url());
     tab->url = target;
     if (tab->webview) {
         tab->webview->Navigate(to_wide(target).c_str());
@@ -1170,20 +1327,20 @@ ModalPromptResult run_dark_modal(
 }
 
 void open_searxng_dialog() {
+    std::string initial = (g_app.store.search_engine_url() == "duckduckgo") ? "" : g_app.store.search_engine_url();
     auto res = run_dark_modal(
         L"Custom SearXNG Search Engine",
-        L"Enter your SearXNG base URL (e.g. https://searx.example.com or http://localhost:8080):",
-        g_app.store.search_engine_url(),
-        L"Save", L"Local :8080", L"DuckDuckGo", false);
+        L"Leave blank for Bundled SearXNG, or enter your own URL:",
+        initial,
+        L"Save", L"Bundled", L"DuckDuckGo", false);
     if (res.button == 1) g_app.store.set_search_engine_url(res.text);
-    else if (res.button == 2) g_app.store.set_search_engine_url("http://localhost:8080");
-    else if (res.button == 3) g_app.store.set_search_engine_url("");
+    else if (res.button == 2) g_app.store.set_search_engine_url("");
+    else if (res.button == 3) g_app.store.set_search_engine_url("duckduckgo");
     else return;
 
     sync_search_placeholder();
-    std::string home = xnc::home_url_for_search_engine(g_app.store.search_engine_url());
-    if (auto* t = current_tab(); t && t->webview) {
-        t->webview->Navigate(to_wide(home).c_str());
+    for (auto& t : g_app.tabs) {
+        if (is_newtab_url(t->url)) inject_cosmetic_and_mica(t.get());
     }
     invalidate_chrome();
 }
@@ -1425,7 +1582,7 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                     }
                 } else if (type == "navigate") {
                     std::string target = xnc::resolve_input(
-                        extract_json_string_field(msg, "input"), g_app.store.search_engine_url());
+                        extract_json_string_field(msg, "input"), effective_search_engine_url());
                     tab->url = target;
                     if (tab->webview) tab->webview->Navigate(to_wide(target).c_str());
                 } else if (type == "setSearxng") {
@@ -1746,6 +1903,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (auto blocklist_path = find_shared_file("blocklist_domains.txt"); !blocklist_path.empty()) {
             g_app.blocker.load_domains_file(blocklist_path);
         }
+        start_bundled_searxng();
+        sync_search_placeholder();
 
         CreateCoreWebView2EnvironmentWithOptions(
             nullptr, nullptr, nullptr,
@@ -1822,6 +1981,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         invalidate_chrome();
         return 0;
     }
+    case kWmAppSearxReady:
+        g_app.searxng_ready = true;
+        sync_search_placeholder();
+        for (auto& t : g_app.tabs) {
+            if (is_newtab_url(t->url)) inject_cosmetic_and_mica(t.get());
+        }
+        invalidate_chrome();
+        return 0;
     case WM_SIZE:
         compute_layout();
         invalidate_chrome();
@@ -1885,6 +2052,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
     case WM_DESTROY:
+        stop_bundled_searxng();
         for (auto& tab : g_app.tabs) {
             tab->closed = true;
             if (tab->controller) tab->controller->Close();
@@ -1906,6 +2074,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
+    WSADATA wsa{};
+    WSAStartup(MAKEWORD(2, 2), &wsa);
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     BufferedPaintInit();
@@ -1960,5 +2130,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     Gdiplus::GdiplusShutdown(gdi_token);
     BufferedPaintUnInit();
     CoUninitialize();
+    WSACleanup();
     return static_cast<int>(msg.wParam);
 }

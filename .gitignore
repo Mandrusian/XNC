@@ -11,6 +11,8 @@ dist/
 *.app/
 windows/packages/
 packages/
+searxng-runtime/
+*/searxng-runtime/
 
 # OS / IDE files
 .DS_Store

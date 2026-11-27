@@ -9,6 +9,9 @@ public enum URLResolver {
         guard !trimmed.isEmpty else { return "" }
 
         let lower = trimmed.lowercased()
+        if lower == "duckduckgo" || lower == "ddg" {
+            return "duckduckgo"
+        }
         var normalized: String
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
             normalized = trimmed
@@ -33,7 +36,7 @@ public enum URLResolver {
 
     public static func homeURL(searchBaseURL: String = "") -> URL {
         let norm = normalizeSearXNGURL(searchBaseURL)
-        guard !norm.isEmpty else { return defaultHomeURL }
+        guard !norm.isEmpty && norm != "duckduckgo" else { return defaultHomeURL }
         if norm.contains("{query}"), let url = URL(string: norm), let scheme = url.scheme, let host = url.host {
             let port = url.port.map { ":\($0)" } ?? ""
             if let root = URL(string: "\(scheme)://\(host)\(port)/") {
@@ -60,7 +63,7 @@ public enum URLResolver {
         }
 
         let searx = normalizeSearXNGURL(searchBaseURL)
-        if !searx.isEmpty {
+        if !searx.isEmpty && searx != "duckduckgo" {
             let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
             if searx.contains("{query}"),
                let url = URL(string: searx.replacingOccurrences(of: "{query}", with: encoded)) {

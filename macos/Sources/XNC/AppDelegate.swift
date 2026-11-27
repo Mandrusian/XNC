@@ -4,15 +4,31 @@ import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = BrowserStore()
+    let localSearXNG = LocalSearXNGManager()
     private(set) var contentRuleList: WKContentRuleList?
     private(set) var blockerEnabled = true
     private var windows: [BrowserWindowController] = []
 
+    var effectiveSearchEngineURL: String {
+        let configured = store.searchEngineURL
+        if configured == "duckduckgo" { return "" }
+        if !configured.isEmpty { return configured }
+        return localSearXNG.baseURL
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenu()
         recompileBlockerRules()
+        localSearXNG.start { [weak self] _ in
+            self?.refreshSearchEngineUI()
+        }
         openNewWindow()
+        refreshSearchEngineUI()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        localSearXNG.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -91,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func refreshSearchEngineUI() {
         for win in windows {
             win.syncSearchPlaceholder()
+            win.refreshNewTabSearchState()
         }
     }
 

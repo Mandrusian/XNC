@@ -126,6 +126,10 @@ std::string percent_encode(std::string_view input) {
 std::string normalize_searxng_base(std::string_view raw) {
     std::string_view trimmed = trim_ascii(raw);
     if (trimmed.empty()) return {};
+    std::string lower = to_lower_ascii(trimmed);
+    if (lower == "duckduckgo" || lower == "ddg") {
+        return "duckduckgo";
+    }
 
     std::string url;
     if (starts_with_ci(trimmed, "http://") || starts_with_ci(trimmed, "https://")) {
@@ -153,7 +157,7 @@ std::string normalize_searxng_base(std::string_view raw) {
 
 std::string home_url_for_search_engine(std::string_view search_base_url) {
     std::string norm = normalize_searxng_base(search_base_url);
-    if (norm.empty()) {
+    if (norm.empty() || norm == "duckduckgo") {
         return std::string(kDefaultHomeUrl);
     }
     if (norm.find("{query}") != std::string::npos) {
@@ -185,7 +189,7 @@ std::string resolve_input(std::string_view raw, std::string_view search_base_url
 
     std::string encoded = percent_encode(trimmed);
     std::string searx = normalize_searxng_base(search_base_url);
-    if (!searx.empty()) {
+    if (!searx.empty() && searx != "duckduckgo") {
         auto pos = searx.find("{query}");
         if (pos != std::string::npos) {
             searx.replace(pos, 7, encoded);

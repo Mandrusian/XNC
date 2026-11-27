@@ -15,6 +15,9 @@ private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 protocol TabViewControllerDelegate: AnyObject {
+    var effectiveSearchEngineURL: String { get }
+    var bundledSearchEngineURL: String { get }
+    var isBundledSearchReady: Bool { get }
     func tabDidUpdate(_ tab: TabViewController)
     func tab(_ tab: TabViewController, didRequestNewTabWith url: URL, isPrivate: Bool)
     func tab(_ tab: TabViewController, didFinishNavigation url: URL, title: String)
@@ -132,9 +135,16 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func syncNewTabState() {
-        let searxData = (try? JSONEncoder().encode(store.searchEngineURL)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        let enc = JSONEncoder()
+        let encodeStr = { (s: String) -> String in
+            (try? enc.encode(s)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        }
+        let eff = encodeStr(delegate?.effectiveSearchEngineURL ?? store.searchEngineURL)
+        let cfg = encodeStr(store.searchEngineURL)
+        let bundled = encodeStr(delegate?.bundledSearchEngineURL ?? "")
+        let ready = (delegate?.isBundledSearchReady ?? false) ? "true" : "false"
         let micaLiteral = store.transparentWebsites ? "true" : "false"
-        let js = "if (typeof window.__xncApplyState === 'function') window.__xncApplyState({ searxngUrl: \(searxData), micaEnabled: \(micaLiteral) });"
+        let js = "if (typeof window.__xncApplyState === 'function') window.__xncApplyState({ searxngUrl: \(eff), configuredSearxngUrl: \(cfg), bundledSearxngUrl: \(bundled), searxngReady: \(ready), micaEnabled: \(micaLiteral) });"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
@@ -172,9 +182,10 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             shieldEnabled: blockerEnabled,
             bundle: Bundle.main
         )
-        let searxHost = store.searchEngineURL.isEmpty
+        let effURL = delegate?.effectiveSearchEngineURL ?? store.searchEngineURL
+        let searxHost = effURL.isEmpty
             ? ""
-            : (URLResolver.homeURL(searchBaseURL: store.searchEngineURL).host ?? "").lowercased()
+            : (URLResolver.homeURL(searchBaseURL: effURL).host ?? "").lowercased()
         if !searxHost.isEmpty && host.lowercased() == searxHost {
             let searxCSS = ContentBlockerRules.loadSearXNGThemeCSS(from: Bundle.main)
             if !searxCSS.isEmpty {

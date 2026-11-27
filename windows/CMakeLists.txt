@@ -38,6 +38,7 @@ target_link_libraries(xnc PRIVATE
     ole32
     shlwapi
     version
+    ws2_32
 )
 
 target_compile_definitions(xnc PRIVATE UNICODE _UNICODE NOMINMAX _CRT_SECURE_NO_WARNINGS)

@@ -24,6 +24,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 [Files]
 Source: "build\Release\xnc.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\shared\*"; DestDir: "{app}\shared"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "searxng-runtime\*"; DestDir: "{app}\searxng-runtime"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\XNC"; Filename: "{app}\xnc.exe"; IconFilename: "{app}\xnc.exe"

@@ -707,11 +707,12 @@
     <div class="sd-sec">
       <div class="sd-sec-label"><span>SearXNG Search</span></div>
       <div class="searx-row" style="margin-bottom:6px;">
-        <input class="field mono" id="sdSearxIn" style="flex:1" placeholder="http://localhost:8080" />
+        <input class="field mono" id="sdSearxIn" style="flex:1" placeholder="Bundled SearXNG or custom URL" />
         <button class="flat-btn primary" id="sdSearxSave">Save</button>
       </div>
       <div style="display:flex;gap:6px;">
-        <button class="flat-btn" style="flex:1" id="sdSearx8080">Local :8080</button>
+        <button class="flat-btn" style="flex:1" id="sdSearxBundled">Bundled</button>
+        <button class="flat-btn" style="flex:1" id="sdSearx8080">:8080</button>
         <button class="flat-btn" style="flex:1" id="sdSearxDDG">DuckDuckGo</button>
       </div>
     </div>
@@ -759,6 +760,9 @@
   }
 
   let prefs = loadPrefs();
+  let bundledSearxUrl = '';
+  let configuredSearxUrl = '';
+  let searxReady = false;
   let isNative = Boolean(window.webkit?.messageHandlers?.xncHome || window.chrome?.webview);
   document.body.classList.toggle('standalone', !isNative);
 
@@ -780,6 +784,9 @@
     if (!state || typeof state !== 'object') return;
     isNative = true;
     document.body.classList.remove('standalone');
+    if (typeof state.bundledSearxngUrl === 'string') bundledSearxUrl = state.bundledSearxngUrl;
+    if (typeof state.configuredSearxngUrl === 'string') configuredSearxUrl = state.configuredSearxngUrl;
+    if (typeof state.searxngReady === 'boolean') searxReady = state.searxngReady;
     if (typeof state.searxngUrl === 'string') prefs.searxUrl = state.searxngUrl;
     if (typeof state.micaEnabled === 'boolean') prefs.mica = state.micaEnabled;
     savePrefs();
@@ -824,10 +831,12 @@
   }
 
   function setSearxng(url) {
-    prefs.searxUrl = url.trim();
+    const clean = url.trim();
+    configuredSearxUrl = clean;
+    prefs.searxUrl = (clean === 'duckduckgo') ? '' : (clean || bundledSearxUrl);
     savePrefs();
-    if (!xncSend({ type: 'setSearxng', url: prefs.searxUrl })) {
-      showToast(prefs.searxUrl ? `SearXNG set to ${prefs.searxUrl}` : 'Switched to DuckDuckGo');
+    if (!xncSend({ type: 'setSearxng', url: clean })) {
+      showToast(clean === 'duckduckgo' ? 'Switched to DuckDuckGo' : (clean ? `SearXNG set to ${clean}` : 'Bundled SearXNG selected'));
     }
     renderAll();
   }
@@ -1006,12 +1015,13 @@
       sw.classList.toggle('on', Boolean(prefs[sw.dataset.pref]));
     });
 
-    const engineLabel = prefs.searxUrl ? 'SearXNG' : 'DuckDuckGo';
+    const isBundled = Boolean(bundledSearxUrl && prefs.searxUrl === bundledSearxUrl);
+    const engineLabel = prefs.searxUrl ? (isBundled ? 'SearXNG · Local' : 'SearXNG') : 'DuckDuckGo';
     document.querySelectorAll('[data-engine-label]').forEach(el => el.textContent = engineLabel);
     document.getElementById('studioEngineHint').textContent = prefs.searxUrl
-      ? `SearXNG (${hostOf(prefs.searxUrl)})`
+      ? (isBundled ? (searxReady ? 'SearXNG · Local Ready' : 'SearXNG · Starting') : `SearXNG (${hostOf(prefs.searxUrl)})`)
       : 'DuckDuckGo';
-    document.getElementById('sdSearxIn').value = prefs.searxUrl;
+    document.getElementById('sdSearxIn').value = configuredSearxUrl === 'duckduckgo' ? '' : (configuredSearxUrl || '');
 
     updateStudioIntent();
     updateClock();
@@ -1047,9 +1057,10 @@
   function renderSearxPop(pop) {
     pop.innerHTML = `
       <div class="searx-row">
-        <input class="field mono" style="flex:1" type="text" placeholder="http://localhost:8080 or https://searx.example" />
+        <input class="field mono" style="flex:1" type="text" placeholder="Bundled SearXNG or https://searx.example" />
+        <button type="button" class="flat-btn" data-p="">Bundled</button>
         <button type="button" class="flat-btn" data-p="http://localhost:8080">:8080</button>
-        <button type="button" class="flat-btn" data-p="">DDG</button>
+        <button type="button" class="flat-btn" data-p="duckduckgo">DDG</button>
         <button type="button" class="flat-btn primary" data-sv>Save</button>
       </div>
       <div class="searx-meta">
@@ -1057,7 +1068,7 @@
         <span>Esc to close</span>
       </div>`;
     const inp = pop.querySelector('input');
-    inp.value = prefs.searxUrl;
+    inp.value = configuredSearxUrl === 'duckduckgo' ? '' : (configuredSearxUrl || '');
     pop.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => {
       setSearxng(b.dataset.p);
       closeSearxPops();
@@ -1145,8 +1156,9 @@
   });
 
   document.getElementById('sdSearxSave').addEventListener('click', () => setSearxng(document.getElementById('sdSearxIn').value));
+  document.getElementById('sdSearxBundled').addEventListener('click', () => setSearxng(''));
   document.getElementById('sdSearx8080').addEventListener('click', () => setSearxng('http://localhost:8080'));
-  document.getElementById('sdSearxDDG').addEventListener('click', () => setSearxng(''));
+  document.getElementById('sdSearxDDG').addEventListener('click', () => setSearxng('duckduckgo'));
 
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeDrawer(); closeSearxPops(); }

@@ -41,6 +41,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
       - name: Install WebView2 SDK via NuGet
         run: nuget install Microsoft.Web.WebView2 -OutputDirectory windows/packages -ExcludeVersion
       - name: Build Windows Release Binary
@@ -49,6 +50,10 @@ jobs:
           cmake --build windows/build --config Release
           $bin = Get-Item windows/build/Release/xnc.exe
           Write-Host "Windows binary size: $($bin.Length) bytes"
+      - name: Bundle Portable SearXNG Runtime
+        shell: pwsh
+        run: |
+          pwsh -ExecutionPolicy Bypass -File scripts\bundle-searxng-windows.ps1 -OutDir windows\searxng-runtime
       - name: Build Zero-UAC Setup EXE (Inno Setup)
         shell: pwsh
         run: |
@@ -64,6 +69,7 @@ jobs:
           New-Item -ItemType Directory -Path stage\XNC\shared -Force | Out-Null
           Copy-Item windows\build\Release\xnc.exe stage\XNC\xnc.exe
           Copy-Item shared\* stage\XNC\shared\ -Recurse
+          Copy-Item windows\searxng-runtime stage\XNC\searxng-runtime -Recurse
           Compress-Archive -Path stage\XNC\* -DestinationPath XNC-windows-x64.zip -Force
       - name: Upload Windows Release Assets
         shell: bash
@@ -78,6 +84,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Bundle Portable SearXNG Runtime
+        run: |
+          chmod +x scripts/bundle-searxng-macos.sh
+          ./scripts/bundle-searxng-macos.sh macos/searxng-runtime
       - name: Package macOS XNC.app
         run: |
           cd macos
