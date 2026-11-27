@@ -282,6 +282,8 @@ struct AppState {
     RECT address_pill_rc{};
     HitBox hovered{};
     bool tracking_mouse = false;
+    bool is_fullscreen = false;
+    WINDOWPLACEMENT prev_placement{sizeof(WINDOWPLACEMENT)};
 };
 
 AppState g_app;
@@ -290,9 +292,30 @@ int px(int dp) {
     return static_cast<int>(dp * g_app.dpi_scale + 0.5f);
 }
 
-int tab_strip_height() { return px(38); }
-int toolbar_height() { return px(38); }
-int chrome_height() { return tab_strip_height() + toolbar_height() + px(2); }
+int tab_strip_height() { return g_app.is_fullscreen ? 0 : px(38); }
+int toolbar_height() { return g_app.is_fullscreen ? 0 : px(38); }
+int chrome_height() { return g_app.is_fullscreen ? 0 : (tab_strip_height() + toolbar_height() + px(2)); }
+
+bool is_newtab_url(const std::string& url) {
+    return url.find("xnc.local/newtab.html") != std::string::npos || url == "about:newtab";
+}
+
+std::string default_newtab_url() {
+    if (!find_shared_file("newtab.html").empty()) {
+        return "https://xnc.local/newtab.html";
+    }
+    return xnc::home_url_for_search_engine(g_app.store.search_engine_url());
+}
+
+std::string json_escape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        if (c == '\\' || c == '"') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
 
 RECT webview_bounds() {
     RECT rc{};
@@ -342,11 +365,27 @@ void inject_cosmetic_and_mica(Tab* tab) {
     }
     if (!tab->webview) return;
 
+    if (is_newtab_url(tab->url)) {
+        std::string js = "if (typeof window.__xncApplyState === 'function') window.__xncApplyState({searxngUrl:\""
+            + json_escape(g_app.store.search_engine_url()) + "\",micaEnabled:" + (mica ? "true" : "false") + "});";
+        tab->webview->ExecuteScript(to_wide(js).c_str(), nullptr);
+        return;
+    }
+
     std::string host = xnc::extract_host(tab->url);
     bool shield_active = g_app.blocker.enabled() && !g_app.store.is_host_allowlisted(host);
     std::string cosmetic_css = load_shared_text("cosmetic_rules.css", std::string(xnc::Blocker::default_cosmetic_css()));
     std::string css = xnc::Blocker::build_css_for_host(
         shield_active, g_app.store.custom_selectors(host), cosmetic_css);
+    if (!g_app.store.search_engine_url().empty()) {
+        std::string searx_host = xnc::extract_host(xnc::home_url_for_search_engine(g_app.store.search_engine_url()));
+        if (!searx_host.empty() && host == searx_host) {
+            std::string searx_css = load_shared_text("searxng_theme.css", "");
+            if (!searx_css.empty()) {
+                css += "\n" + searx_css;
+            }
+        }
+    }
     tab->webview->ExecuteScript(to_wide(xnc::Blocker::build_inject_css_script(css)).c_str(), nullptr);
     tab->webview->ExecuteScript(to_wide(xnc::Blocker::build_transparent_mica_script(mica)).c_str(), nullptr);
 }
@@ -359,7 +398,8 @@ void sync_toolbar() {
     SetWindowTextW(g_app.hwnd, to_wide(title).c_str());
 
     if (GetFocus() != g_app.address_edit) {
-        SetWindowTextW(g_app.address_edit, to_wide(tab->url).c_str());
+        std::string display_url = is_newtab_url(tab->url) ? "" : tab->url;
+        SetWindowTextW(g_app.address_edit, to_wide(display_url).c_str());
     }
     sync_search_placeholder();
     invalidate_chrome();
@@ -438,15 +478,18 @@ void compute_layout() {
     g_app.address_pill_rc = {pill_left, bar_y, pill_right, bar_y + btn_sz};
 
     if (g_app.address_edit) {
-        int pad_x = px(11);
-        int edit_h = px(18);
-        int edit_y = bar_y + (btn_sz - edit_h) / 2;
-        MoveWindow(g_app.address_edit,
-                   pill_left + pad_x,
-                   edit_y,
-                   (std::max)(40, (pill_right - pill_left) - pad_x * 2),
-                   edit_h,
-                   TRUE);
+        ShowWindow(g_app.address_edit, g_app.is_fullscreen ? SW_HIDE : SW_SHOW);
+        if (!g_app.is_fullscreen) {
+            int pad_x = px(11);
+            int edit_h = px(18);
+            int edit_y = bar_y + (btn_sz - edit_h) / 2;
+            MoveWindow(g_app.address_edit,
+                       pill_left + pad_x,
+                       edit_y,
+                       (std::max)(40, (pill_right - pill_left) - pad_x * 2),
+                       edit_h,
+                       TRUE);
+        }
     }
 
     RECT wv_rc = webview_bounds();
@@ -630,6 +673,7 @@ void draw_glyph_icon(Gdiplus::Graphics& g, HitKind kind, RECT rc, bool hovered, 
 void paint_chrome(HDC hdc) {
     RECT rc{};
     GetClientRect(g_app.hwnd, &rc);
+    if (chrome_height() <= 0) return;
     RECT chrome_rc{0, 0, rc.right, chrome_height()};
 
     HDC buf_hdc = nullptr;
@@ -807,6 +851,35 @@ void toggle_transparent_mica() {
         inject_cosmetic_and_mica(tab.get());
     }
     sync_toolbar();
+}
+
+void toggle_fullscreen() {
+    if (!g_app.hwnd) return;
+    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(g_app.hwnd, GWL_STYLE));
+    if (!g_app.is_fullscreen) {
+        MONITORINFO mi{sizeof(mi)};
+        if (GetWindowPlacement(g_app.hwnd, &g_app.prev_placement) &&
+            GetMonitorInfoW(MonitorFromWindow(g_app.hwnd, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            g_app.is_fullscreen = true;
+            SetWindowLongPtrW(g_app.hwnd, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
+            SetWindowPos(
+                g_app.hwnd, HWND_TOP,
+                mi.rcMonitor.left, mi.rcMonitor.top,
+                mi.rcMonitor.right - mi.rcMonitor.left,
+                mi.rcMonitor.bottom - mi.rcMonitor.top,
+                SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        }
+    } else {
+        g_app.is_fullscreen = false;
+        SetWindowLongPtrW(g_app.hwnd, GWL_STYLE, style | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(g_app.hwnd, &g_app.prev_placement);
+        SetWindowPos(
+            g_app.hwnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+    apply_mica_backdrop(g_app.hwnd, g_app.store.transparent_websites(), chrome_height());
+    compute_layout();
+    invalidate_chrome();
 }
 
 void navigate_from_address_bar() {
@@ -1268,6 +1341,18 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
     controller->put_IsVisible(tab.get() == current_tab() ? TRUE : FALSE);
 
     if (!tab->webview) return;
+
+#ifdef __ICoreWebView2_3_INTERFACE_DEFINED__
+    if (auto newtab_path = find_shared_file("newtab.html"); !newtab_path.empty()) {
+        ComPtr<ICoreWebView2_3> w3;
+        if (SUCCEEDED(tab->webview.As(&w3)) && w3) {
+            std::wstring shared_dir = newtab_path.parent_path().wstring();
+            w3->SetVirtualHostNameToFolderMapping(
+                L"xnc.local", shared_dir.c_str(), COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_ALLOW);
+        }
+    }
+#endif
+
     inject_cosmetic_and_mica(tab.get());
 
     EventRegistrationToken token{};
@@ -1330,13 +1415,38 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                 if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
                 std::string msg = to_utf8(raw);
                 CoTaskMemFree(raw);
-                if (extract_json_string_field(msg, "type") == "zapper") {
+                std::string type = extract_json_string_field(msg, "type");
+                if (type == "zapper") {
                     std::string host = extract_json_string_field(msg, "host");
                     std::string sel = extract_json_string_field(msg, "selector");
                     if (!host.empty() && !sel.empty()) {
                         g_app.store.add_custom_selector(host, sel);
                         inject_cosmetic_and_mica(tab.get());
                     }
+                } else if (type == "navigate") {
+                    std::string target = xnc::resolve_input(
+                        extract_json_string_field(msg, "input"), g_app.store.search_engine_url());
+                    tab->url = target;
+                    if (tab->webview) tab->webview->Navigate(to_wide(target).c_str());
+                } else if (type == "setSearxng") {
+                    g_app.store.set_search_engine_url(extract_json_string_field(msg, "url"));
+                    sync_search_placeholder();
+                    for (auto& t : g_app.tabs) {
+                        if (is_newtab_url(t->url)) inject_cosmetic_and_mica(t.get());
+                    }
+                    invalidate_chrome();
+                } else if (type == "setMica") {
+                    bool wants_mica = msg.find("\"enabled\":true") != std::string::npos ||
+                                      msg.find("\"enabled\": true") != std::string::npos;
+                    if (wants_mica != g_app.store.transparent_websites()) {
+                        toggle_transparent_mica();
+                    }
+                } else if (type == "action") {
+                    std::string act = extract_json_string_field(msg, "name");
+                    if (act == "newPrivateTab") add_tab(default_newtab_url(), true);
+                    else if (act == "zapper") trigger_zapper();
+                    else if (act == "fullscreen") toggle_fullscreen();
+                    else if (act == "clearData") clear_browsing_data();
                 }
                 return S_OK;
             }).Get(),
@@ -1378,8 +1488,12 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                     if (!t.empty()) tab->title = t;
                     CoTaskMemFree(title);
                 }
+                if (is_newtab_url(tab->url)) {
+                    tab->title = tab->is_private ? "Private Tab" : "New Tab";
+                } else {
+                    g_app.store.record_history(tab->title, tab->url, tab->is_private);
+                }
                 inject_cosmetic_and_mica(tab.get());
-                g_app.store.record_history(tab->title, tab->url, tab->is_private);
                 if (tab.get() == current_tab()) sync_toolbar();
                 else invalidate_chrome();
                 return S_OK;
@@ -1390,6 +1504,10 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
         Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
             [tab](ICoreWebView2* sender, IUnknown*) -> HRESULT {
                 if (tab->closed) return S_OK;
+                if (is_newtab_url(tab->url)) {
+                    tab->title = tab->is_private ? "Private Tab" : "New Tab";
+                    return S_OK;
+                }
                 LPWSTR title = nullptr;
                 if (SUCCEEDED(sender->get_DocumentTitle(&title)) && title) {
                     std::string t = to_utf8(title);
@@ -1412,6 +1530,7 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                     if (u != "about:blank" || tab->url.empty()) tab->url = u;
                     CoTaskMemFree(uri);
                 }
+                if (is_newtab_url(tab->url)) tab->title = tab->is_private ? "Private Tab" : "New Tab";
                 if (tab.get() == current_tab()) sync_toolbar();
                 return S_OK;
             }).Get(),
@@ -1468,8 +1587,7 @@ void add_tab(const std::string& initial_url, bool is_private) {
     auto tab = std::make_shared<Tab>();
     tab->is_private = is_private;
     tab->title = is_private ? "Private Tab" : "New Tab";
-    std::string home = xnc::home_url_for_search_engine(g_app.store.search_engine_url());
-    tab->url = initial_url.empty() ? home : initial_url;
+    tab->url = initial_url.empty() ? default_newtab_url() : initial_url;
 
     g_app.tabs.push_back(tab);
     select_tab(static_cast<int>(g_app.tabs.size()) - 1);
@@ -1499,7 +1617,7 @@ void handle_hitbox_click(const HitBox& hb) {
     switch (hb.kind) {
     case HitKind::TabSelect: select_tab(hb.index); break;
     case HitKind::TabClose: close_tab_at(hb.index); break;
-    case HitKind::NewTab: add_tab(xnc::home_url_for_search_engine(g_app.store.search_engine_url()), false); break;
+    case HitKind::NewTab: add_tab(default_newtab_url(), false); break;
     case HitKind::MinBtn: ShowWindow(g_app.hwnd, SW_MINIMIZE); break;
     case HitKind::MaxBtn:
         ShowWindow(g_app.hwnd, IsZoomed(g_app.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
@@ -1522,7 +1640,7 @@ void handle_hitbox_click(const HitBox& hb) {
             sync_toolbar();
         }
         break;
-    case HitKind::PrivateTab: add_tab(xnc::home_url_for_search_engine(g_app.store.search_engine_url()), true); break;
+    case HitKind::PrivateTab: add_tab(default_newtab_url(), true); break;
     case HitKind::Dev: show_dev_menu(anchor_pt(hb.rect, true)); break;
     case HitKind::Menu: show_main_menu(anchor_pt(hb.rect, true)); break;
     default: break;
@@ -1530,6 +1648,10 @@ void handle_hitbox_click(const HitBox& hb) {
 }
 
 bool process_shortcut(UINT vkey, bool ctrl, bool shift, bool alt) {
+    if (vkey == VK_F11 && !ctrl && !alt) {
+        toggle_fullscreen();
+        return true;
+    }
     if (vkey == VK_F12) {
         if (auto* t = current_tab(); t && t->webview) t->webview->OpenDevToolsWindow();
         return true;
@@ -1539,7 +1661,7 @@ bool process_shortcut(UINT vkey, bool ctrl, bool shift, bool alt) {
         return true;
     }
     if (ctrl && !shift && !alt) {
-        if (vkey == 'T') { add_tab(xnc::home_url_for_search_engine(g_app.store.search_engine_url()), false); return true; }
+        if (vkey == 'T') { add_tab(default_newtab_url(), false); return true; }
         if (vkey == 'W') { close_tab_at(g_app.selected_index); return true; }
         if (vkey == 'L') {
             SetFocus(g_app.address_edit);
@@ -1563,7 +1685,7 @@ bool process_shortcut(UINT vkey, bool ctrl, bool shift, bool alt) {
         if (vkey == 'U') { view_page_source(); return true; }
         if (vkey == VK_OEM_COMMA) { open_searxng_dialog(); return true; }
     } else if (ctrl && shift && !alt) {
-        if (vkey == 'N') { add_tab(xnc::home_url_for_search_engine(g_app.store.search_engine_url()), true); return true; }
+        if (vkey == 'N') { add_tab(default_newtab_url(), true); return true; }
         if (vkey == 'B') {
             g_app.blocker.set_enabled(!g_app.blocker.enabled());
             inject_cosmetic_and_mica(current_tab());
@@ -1631,7 +1753,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 [](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
                     if (SUCCEEDED(hr) && env && IsWindow(g_app.hwnd)) {
                         g_app.env = env;
-                        add_tab(xnc::home_url_for_search_engine(g_app.store.search_engine_url()), false);
+                        add_tab(default_newtab_url(), false);
                     }
                     return S_OK;
                 }).Get());

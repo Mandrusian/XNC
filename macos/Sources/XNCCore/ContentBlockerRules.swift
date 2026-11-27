@@ -250,6 +250,51 @@ public enum ContentBlockerRules {
         return defaultZapperScript
     }
 
+    public static func newTabFileURL(from bundle: Bundle? = nil) -> URL? {
+        if let bundled = bundle?.url(forResource: "newtab", withExtension: "html") {
+            return bundled
+        }
+        if let execDir = bundle?.executableURL?.deletingLastPathComponent() {
+            let candidates = [
+                execDir.appendingPathComponent("shared/newtab.html"),
+                execDir.appendingPathComponent("../shared/newtab.html"),
+                execDir.appendingPathComponent("../../../shared/newtab.html")
+            ]
+            for url in candidates where FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        for rel in ["shared/newtab.html", "../shared/newtab.html"] {
+            let url = cwd.appendingPathComponent(rel)
+            if FileManager.default.fileExists(atPath: url.path) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    public static func isNewTabURL(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return url.isFileURL && url.lastPathComponent == "newtab.html"
+    }
+
+    public static func loadSearXNGThemeCSS(from bundle: Bundle? = nil) -> String {
+        if let bundleURL = bundle?.url(forResource: "searxng_theme", withExtension: "css"),
+           let contents = try? String(contentsOf: bundleURL, encoding: .utf8),
+           !contents.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return contents
+        }
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        for rel in ["shared/searxng_theme.css", "../shared/searxng_theme.css"] {
+            let url = cwd.appendingPathComponent(rel)
+            if let contents = try? String(contentsOf: url, encoding: .utf8), !contents.isEmpty {
+                return contents
+            }
+        }
+        return ""
+    }
+
     public static func cssForHost(_ host: String, store: BrowserStore, shieldEnabled: Bool, bundle: Bundle? = nil) -> String {
         let normalized = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let active = shieldEnabled && !store.isHostAllowlisted(normalized)

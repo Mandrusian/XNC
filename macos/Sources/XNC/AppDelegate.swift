@@ -24,11 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newTabAction(_ sender: Any?) {
-        activeWindow()?.addTab(url: URLResolver.homeURL(searchBaseURL: store.searchEngineURL), isPrivate: false)
+        activeWindow()?.addTab(url: nil, isPrivate: false)
     }
 
     @objc func newPrivateTabAction(_ sender: Any?) {
-        activeWindow()?.addTab(url: URLResolver.homeURL(searchBaseURL: store.searchEngineURL), isPrivate: true)
+        activeWindow()?.addTab(url: nil, isPrivate: true)
     }
 
     @objc func closeTabAction(_ sender: Any?) {
@@ -78,6 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for win in windows {
             win.applyTransparentMica(next)
         }
+    }
+
+    @objc func toggleFullScreenAction(_ sender: Any?) {
+        activeWindow()?.window?.toggleFullScreen(sender)
     }
 
     @objc func configureSearchEngineAction(_ sender: Any?) {
@@ -219,6 +223,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let micaItem = NSMenuItem(title: "Transparent Mica Websites", action: #selector(toggleTransparentMicaAction(_:)), keyEquivalent: "M")
         micaItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(micaItem)
+        let fsItem = NSMenuItem(title: "Toggle Fullscreen (F11)", action: #selector(toggleFullScreenAction(_:)), keyEquivalent: "f")
+        fsItem.keyEquivalentModifierMask = [.command, .control]
+        viewMenu.addItem(fsItem)
         viewMenu.addItem(.separator())
         let nextTab = NSMenuItem(title: "Next Tab", action: #selector(nextTabAction(_:)), keyEquivalent: "\t")
         nextTab.keyEquivalentModifierMask = [.control]

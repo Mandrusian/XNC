@@ -1,0 +1,93 @@
+/* XNC Custom Minimalist SearXNG Theme */
+:root {
+  --xnc-bg: #000000;
+  --xnc-surface: #0b0b0c;
+  --xnc-surface-hover: #141417;
+  --xnc-border: rgba(255, 255, 255, 0.085);
+  --xnc-text: #ffffff;
+  --xnc-muted: rgba(255, 255, 255, 0.56);
+  --xnc-faint: rgba(255, 255, 255, 0.34);
+}
+
+html, body {
+  background: var(--xnc-bg) !important;
+  color: var(--xnc-text) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+}
+
+main, header, #main_results, #sidebar, #search_header, .search_filters, footer {
+  background: transparent !important;
+  border-color: var(--xnc-border) !important;
+}
+
+/* Search Bar */
+#search_form, .search_box {
+  background: var(--xnc-surface) !important;
+  border: 1px solid var(--xnc-border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+}
+#q, input[type="text"], input[type="search"], select {
+  background: transparent !important;
+  color: var(--xnc-text) !important;
+  border-color: var(--xnc-border) !important;
+  box-shadow: none !important;
+}
+
+/* Categories & Tabs */
+#categories, #categories label, .category {
+  background: transparent !important;
+  color: var(--xnc-muted) !important;
+  border-color: var(--xnc-border) !important;
+}
+#categories input:checked + label {
+  background: var(--xnc-surface-hover) !important;
+  color: var(--xnc-text) !important;
+  border-radius: 8px !important;
+}
+
+/* Search Result Cards */
+.result, article.result, .answer, .infobox, .suggestion_item {
+  background: var(--xnc-surface) !important;
+  border: 1px solid var(--xnc-border) !important;
+  border-radius: 12px !important;
+  padding: 14px 16px !important;
+  margin-bottom: 10px !important;
+  transition: background 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.35s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.result:hover, article.result:hover {
+  background: var(--xnc-surface-hover) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+.result h3 a, article.result h3 a, a {
+  color: #ffffff !important;
+  text-decoration: none !important;
+}
+.result h3 a:hover, article.result h3 a:hover {
+  text-decoration: underline !important;
+}
+.result .url_wrapper, .result .external-link, cite {
+  color: var(--xnc-faint) !important;
+  font-size: 12px !important;
+}
+.result p, .content, .infobox p {
+  color: var(--xnc-muted) !important;
+  line-height: 1.5 !important;
+}
+
+/* Minimal Pagination & Buttons */
+#pagination button, button[type="submit"], .btn {
+  background: var(--xnc-surface) !important;
+  color: var(--xnc-text) !important;
+  border: 1px solid var(--xnc-border) !important;
+  border-radius: 8px !important;
+}
+#pagination button:hover, button[type="submit"]:hover {
+  background: var(--xnc-surface-hover) !important;
+}
+
+/* Hide bloated banners/footers */
+.instance-banner, #main_logo svg {
+  opacity: 0.9;
+}

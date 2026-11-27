@@ -31,6 +31,12 @@ fi
 if [[ -f "$REPO_ROOT/shared/zapper.js" ]]; then
   cp "$REPO_ROOT/shared/zapper.js" "$APP_DIR/Contents/Resources/zapper.js"
 fi
+if [[ -f "$REPO_ROOT/shared/newtab.html" ]]; then
+  cp "$REPO_ROOT/shared/newtab.html" "$APP_DIR/Contents/Resources/newtab.html"
+fi
+if [[ -f "$REPO_ROOT/shared/searxng_theme.css" ]]; then
+  cp "$REPO_ROOT/shared/searxng_theme.css" "$APP_DIR/Contents/Resources/searxng_theme.css"
+fi
 if [[ -f "$REPO_ROOT/shared/XNC.icns" ]]; then
   cp "$REPO_ROOT/shared/XNC.icns" "$APP_DIR/Contents/Resources/XNC.icns"
 fi

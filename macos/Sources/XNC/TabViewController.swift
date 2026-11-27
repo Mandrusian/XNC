@@ -19,6 +19,7 @@ protocol TabViewControllerDelegate: AnyObject {
     func tab(_ tab: TabViewController, didRequestNewTabWith url: URL, isPrivate: Bool)
     func tab(_ tab: TabViewController, didFinishNavigation url: URL, title: String)
     func tab(_ tab: TabViewController, didAddZapperRuleFor host: String)
+    func tab(_ tab: TabViewController, didReceiveHomeAction payload: [String: Any])
 }
 
 final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDelegate {
@@ -63,12 +64,15 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         super.init(nibName: nil, bundle: nil)
 
         config.userContentController.add(WeakScriptMessageHandler(self), name: "xncZapper")
+        config.userContentController.add(WeakScriptMessageHandler(self), name: "xncHome")
         self.webView.navigationDelegate = self
         self.webView.uiDelegate = self
         installObservers()
 
         if let initialURL {
             load(url: initialURL)
+        } else {
+            loadNewTab()
         }
     }
 
@@ -80,6 +84,7 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     deinit {
         observations.forEach { $0.invalidate() }
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "xncZapper")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "xncHome")
     }
 
     override func loadView() {
@@ -88,6 +93,17 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     func load(url: URL) {
         webView.load(URLRequest(url: url))
+    }
+
+    func loadNewTab() {
+        if let fileURL = ContentBlockerRules.newTabFileURL(from: Bundle.main) {
+            state.title = isPrivate ? "Private Tab" : "New Tab"
+            state.urlString = ""
+            webView.loadFileURL(fileURL, allowingReadAccessTo: fileURL.deletingLastPathComponent())
+            delegate?.tabDidUpdate(self)
+        } else {
+            load(url: URLResolver.homeURL(searchBaseURL: store.searchEngineURL))
+        }
     }
 
     func loadHTMLString(_ html: String, title: String) {
@@ -108,7 +124,18 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     func applyTransparentMica(_ enabled: Bool) {
         webView.setValue(!enabled, forKey: "drawsBackground")
+        if ContentBlockerRules.isNewTabURL(webView.url) {
+            syncNewTabState()
+            return
+        }
         webView.evaluateJavaScript(ContentBlockerRules.transparentMicaScript(enabled: enabled), completionHandler: nil)
+    }
+
+    func syncNewTabState() {
+        let searxData = (try? JSONEncoder().encode(store.searchEngineURL)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
+        let micaLiteral = store.transparentWebsites ? "true" : "false"
+        let js = "if (typeof window.__xncApplyState === 'function') window.__xncApplyState({ searxngUrl: \(searxData), micaEnabled: \(micaLiteral) });"
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     func toggleJavaScript() {
@@ -133,13 +160,27 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func injectCosmeticAndMica() {
+        if ContentBlockerRules.isNewTabURL(webView.url) {
+            webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
+            syncNewTabState()
+            return
+        }
         let host = webView.url?.host ?? ""
-        let css = ContentBlockerRules.cssForHost(
+        var css = ContentBlockerRules.cssForHost(
             host,
             store: store,
             shieldEnabled: blockerEnabled,
             bundle: Bundle.main
         )
+        let searxHost = store.searchEngineURL.isEmpty
+            ? ""
+            : (URLResolver.homeURL(searchBaseURL: store.searchEngineURL).host ?? "").lowercased()
+        if !searxHost.isEmpty && host.lowercased() == searxHost {
+            let searxCSS = ContentBlockerRules.loadSearXNGThemeCSS(from: Bundle.main)
+            if !searxCSS.isEmpty {
+                css += "\n" + searxCSS
+            }
+        }
         webView.evaluateJavaScript(ContentBlockerRules.injectCSSScript(css), completionHandler: nil)
         webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
         if store.transparentWebsites {
@@ -166,6 +207,16 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func handleScriptMessage(_ message: WKScriptMessage) {
+        if message.name == "xncHome" {
+            if let dict = message.body as? [String: Any] {
+                delegate?.tab(self, didReceiveHomeAction: dict)
+            } else if let raw = message.body as? String,
+                      let data = raw.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                delegate?.tab(self, didReceiveHomeAction: dict)
+            }
+            return
+        }
         guard message.name == "xncZapper",
               let raw = message.body as? String,
               let data = raw.data(using: .utf8),
@@ -183,6 +234,11 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             webView.observe(\.title, options: [.new]) { [weak self] view, _ in
                 DispatchQueue.main.async {
                     guard let self else { return }
+                    if ContentBlockerRules.isNewTabURL(view.url) {
+                        self.state.title = self.isPrivate ? "Private Tab" : "New Tab"
+                        self.delegate?.tabDidUpdate(self)
+                        return
+                    }
                     let raw = view.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     self.state.title = raw.isEmpty ? (self.isPrivate ? "Private Tab" : "New Tab") : raw
                     self.delegate?.tabDidUpdate(self)
@@ -191,7 +247,11 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             webView.observe(\.url, options: [.new]) { [weak self] view, _ in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.state.urlString = view.url?.absoluteString ?? self.state.urlString
+                    if ContentBlockerRules.isNewTabURL(view.url) {
+                        self.state.urlString = ""
+                    } else {
+                        self.state.urlString = view.url?.absoluteString ?? self.state.urlString
+                    }
                     self.zapperActive = false
                     self.delegate?.tabDidUpdate(self)
                 }
@@ -246,6 +306,12 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         injectCosmeticAndMica()
         guard let url = webView.url else { return }
+        if ContentBlockerRules.isNewTabURL(url) {
+            state.urlString = ""
+            state.title = isPrivate ? "Private Tab" : "New Tab"
+            delegate?.tabDidUpdate(self)
+            return
+        }
         let title = webView.title ?? url.absoluteString
         state.urlString = url.absoluteString
         if !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

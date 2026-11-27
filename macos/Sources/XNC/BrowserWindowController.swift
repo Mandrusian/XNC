@@ -31,6 +31,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let menuButton = NSButton()
     private let progressBar = NSProgressIndicator()
     private let contentContainer = NSView()
+    private var keyMonitor: Any?
 
     init(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
@@ -46,6 +47,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         window.toolbarStyle = .unifiedCompact
         window.isMovableByWindowBackground = false
         window.backgroundColor = .clear
+        window.collectionBehavior.insert(.fullScreenPrimary)
         window.minSize = NSSize(width: 680, height: 440)
         window.center()
         super.init(window: window)
@@ -57,9 +59,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
 
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 103, event.window === self?.window {
+                self?.window?.toggleFullScreen(nil)
+                return nil
+            }
+            return event
+        }
+
         buildLayout()
         syncSearchPlaceholder()
-        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: false)
+        addTab(url: nil, isPrivate: false)
     }
 
     @available(*, unavailable)
@@ -68,6 +78,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     func windowWillClose(_ notification: Notification) {
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
         appDelegate.windowDidClose(self)
     }
 
@@ -624,10 +638,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // MARK: - Actions
 
     @objc private func handleNewTab() {
-        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: false)
+        addTab(url: nil, isPrivate: false)
     }
     @objc private func handleNewPrivateTab() {
-        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: true)
+        addTab(url: nil, isPrivate: true)
     }
     @objc private func handleBack() { goBack() }
     @objc private func handleForward() { goForward() }
@@ -874,5 +888,39 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func tab(_ tab: TabViewController, didAddZapperRuleFor host: String) {
         tab.injectCosmeticAndMica()
+    }
+
+    func tab(_ tab: TabViewController, didReceiveHomeAction payload: [String: Any]) {
+        guard let type = payload["type"] as? String else { return }
+        switch type {
+        case "navigate":
+            let raw = (payload["input"] as? String) ?? ""
+            let url = URLResolver.resolve(raw, searchBaseURL: appDelegate.store.searchEngineURL)
+            tab.load(url: url)
+        case "setSearxng":
+            let raw = (payload["url"] as? String) ?? ""
+            appDelegate.store.setSearchEngineURL(raw)
+            appDelegate.refreshSearchEngineUI()
+            for t in tabs where ContentBlockerRules.isNewTabURL(t.webView.url) {
+                t.syncNewTabState()
+            }
+        case "setMica":
+            if let enabled = payload["enabled"] as? Bool, enabled != appDelegate.store.transparentWebsites {
+                appDelegate.toggleTransparentMicaAction(nil)
+            }
+        case "action":
+            let name = (payload["name"] as? String) ?? ""
+            if name == "newPrivateTab" {
+                addTab(url: nil, isPrivate: true)
+            } else if name == "zapper" {
+                tab.toggleZapper()
+            } else if name == "fullscreen" {
+                window?.toggleFullScreen(nil)
+            } else if name == "clearData" {
+                appDelegate.clearBrowsingDataAction(nil)
+            }
+        default:
+            break
+        }
     }
 }
