@@ -47,24 +47,16 @@ public enum ContentBlockerRules {
     """
 
     public static let transparentMicaCSS = """
-    :root, html, body {
+    :root, html, body,
+    main, header, nav, footer, section, article, aside,
+    [role="main"], [role="banner"], #__next, #root, #app {
       background: transparent !important;
       background-color: transparent !important;
-    }
-    main, article, section, header, nav, footer, aside, [role="main"] {
-      background-color: rgba(128, 128, 140, 0.08) !important;
+      background-image: none !important;
     }
     @media (prefers-color-scheme: dark) {
-      body {
+      :root, html, body {
         color-scheme: dark;
-      }
-      main, article, section, header, nav, footer, aside, [role="main"] {
-        background-color: rgba(18, 18, 24, 0.34) !important;
-      }
-    }
-    @media (prefers-color-scheme: light) {
-      main, article, section, header, nav, footer, aside, [role="main"] {
-        background-color: rgba(255, 255, 255, 0.42) !important;
       }
     }
     """

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#000000"/>
+  <g fill="#FFFFFF">
+    <!-- X (152x520) -->
+    <polygon points="252,252 288,252 404,772 368,772"/>
+    <polygon points="368,252 404,252 288,772 252,772"/>
+    <!-- N (152x520) -->
+    <rect x="436" y="252" width="30" height="520"/>
+    <rect x="558" y="252" width="30" height="520"/>
+    <polygon points="436,252 468,252 588,772 556,772"/>
+    <!-- C (152x520) -->
+    <path d="M 757 355 L 757 308 Q 757 267 696 267 Q 635 267 635 308 L 635 716 Q 635 757 696 757 Q 757 757 757 716 L 757 669"
+          fill="none" stroke="#FFFFFF" stroke-width="30" stroke-linecap="butt"/>
+  </g>
+</svg>
