@@ -1,5 +1,7 @@
 # XNC — XNC is not Chrome
 
+<img src="https://raw.githubusercontent.com/Mandrusian/XNC/main/shared/xnc_icon.png" alt="XNC Logo" width="96" align="left" />
+
 **XNC** is a super-lightweight (<5 MB native binary, well under 20–30 MB), Chromium-free desktop web browser built with native OS UI toolkits and system web engines:
 
 - **macOS:** Swift + AppKit + `WKWebView` (clickable `NSToolbar` unified compact titlebar tabs + `.underWindowBackground` vibrancy blur)
