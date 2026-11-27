@@ -1,0 +1,21 @@
+# Build outputs
+.build/
+build/
+core/build/
+linux/build/
+windows/build/
+macos/.build/
+macos/dist/
+dist/
+*.app/
+windows/packages/
+packages/
+
+# OS / IDE files
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+DerivedData/
+*.xcuserdatad/
