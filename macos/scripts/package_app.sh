@@ -31,6 +31,9 @@ fi
 if [[ -f "$REPO_ROOT/shared/zapper.js" ]]; then
   cp "$REPO_ROOT/shared/zapper.js" "$APP_DIR/Contents/Resources/zapper.js"
 fi
+if [[ -f "$REPO_ROOT/shared/XNC.icns" ]]; then
+  cp "$REPO_ROOT/shared/XNC.icns" "$APP_DIR/Contents/Resources/XNC.icns"
+fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -40,6 +43,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
+  <string>XNC</string>
+  <key>CFBundleIconFile</key>
   <string>XNC</string>
   <key>CFBundleIdentifier</key>
   <string>com.mandrusian.xnc</string>
