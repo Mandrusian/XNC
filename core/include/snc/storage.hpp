@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,7 +20,7 @@ struct HistoryEntry {
     std::int64_t timestamp = 0;
 };
 
-/// Minimal file-backed bookmark and history store.
+/// Minimal file-backed bookmark, history, allowlist, and element-zapper store.
 class BrowserStore {
 public:
     static constexpr size_t kMaxHistoryEntries = 500;
@@ -33,6 +34,7 @@ public:
 
     const std::vector<Bookmark>& bookmarks() const { return bookmarks_; }
     const std::vector<HistoryEntry>& history() const { return history_; }
+    const std::vector<std::string>& allowlisted_hosts() const { return allowlisted_hosts_; }
 
     bool is_bookmarked(std::string_view url) const;
     void add_bookmark(std::string title, std::string url);
@@ -44,12 +46,22 @@ public:
     void record_history(std::string title, std::string url, bool is_private, std::int64_t timestamp = 0);
     void clear_history();
 
+    bool is_host_allowlisted(std::string_view host) const;
+    /// Toggles whether `host` bypasses uBlock-style filtering; returns true if allowlisted after toggling.
+    bool toggle_host_allowlist(std::string_view host);
+
+    std::vector<std::string> custom_selectors(std::string_view host) const;
+    void add_custom_selector(std::string_view host, std::string selector);
+    void clear_custom_selectors(std::string_view host);
+
     const std::filesystem::path& data_dir() const { return data_dir_; }
 
 private:
     std::filesystem::path data_dir_;
     std::vector<Bookmark> bookmarks_;
     std::vector<HistoryEntry> history_;
+    std::vector<std::string> allowlisted_hosts_;
+    std::map<std::string, std::vector<std::string>> custom_selectors_;
 };
 
 } // namespace snc

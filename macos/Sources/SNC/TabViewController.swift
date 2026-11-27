@@ -2,10 +2,23 @@ import AppKit
 import SNCCore
 import WebKit
 
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: TabViewController?
+
+    init(_ target: TabViewController) {
+        self.target = target
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.handleScriptMessage(message)
+    }
+}
+
 protocol TabViewControllerDelegate: AnyObject {
     func tabDidUpdate(_ tab: TabViewController)
     func tab(_ tab: TabViewController, didRequestNewTabWith url: URL, isPrivate: Bool)
     func tab(_ tab: TabViewController, didFinishNavigation url: URL, title: String)
+    func tab(_ tab: TabViewController, didAddZapperRuleFor host: String)
 }
 
 final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDelegate {
@@ -14,24 +27,41 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     let webView: WKWebView
     weak var delegate: TabViewControllerDelegate?
 
+    private unowned let store: BrowserStore
+    private var blockerEnabled: Bool
+    private(set) var jsEnabled = true
+    private(set) var zapperActive = false
     private(set) var state: TabState
     private var observations: [NSKeyValueObservation] = []
 
-    init(initialURL: URL?, isPrivate: Bool, blockerEnabled: Bool, ruleList: WKContentRuleList?) {
+    init(
+        initialURL: URL?,
+        isPrivate: Bool,
+        blockerEnabled: Bool,
+        ruleList: WKContentRuleList?,
+        store: BrowserStore
+    ) {
         self.isPrivate = isPrivate
+        self.blockerEnabled = blockerEnabled
+        self.store = store
         self.state = TabState(id: tabID, urlString: initialURL?.absoluteString ?? "", isPrivate: isPrivate)
 
         let config = WKWebViewConfiguration()
         config.websiteDataStore = isPrivate ? .nonPersistent() : .default()
         config.preferences.isElementFullscreenEnabled = true
+        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
         if blockerEnabled, let ruleList {
             config.userContentController.add(ruleList)
         }
 
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.allowsBackForwardNavigationGestures = true
+        if #available(macOS 13.3, *) {
+            self.webView.isInspectable = true
+        }
         super.init(nibName: nil, bundle: nil)
 
+        config.userContentController.add(WeakScriptMessageHandler(self), name: "sncZapper")
         self.webView.navigationDelegate = self
         self.webView.uiDelegate = self
         installObservers()
@@ -48,6 +78,7 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     deinit {
         observations.forEach { $0.invalidate() }
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "sncZapper")
     }
 
     override func loadView() {
@@ -58,12 +89,84 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         webView.load(URLRequest(url: url))
     }
 
+    func loadHTMLString(_ html: String, title: String) {
+        state.title = title
+        webView.loadHTMLString(html, baseURL: nil)
+        delegate?.tabDidUpdate(self)
+    }
+
     func applyBlocker(enabled: Bool, ruleList: WKContentRuleList?) {
+        self.blockerEnabled = enabled
         let controller = webView.configuration.userContentController
         controller.removeAllContentRuleLists()
         if enabled, let ruleList {
             controller.add(ruleList)
         }
+        injectCosmeticRules()
+    }
+
+    func toggleJavaScript() {
+        jsEnabled.toggle()
+        webView.reload()
+    }
+
+    func setCustomUserAgent(_ ua: String?) {
+        webView.customUserAgent = ua
+        webView.reload()
+    }
+
+    func toggleZapper() {
+        let script = ContentBlockerRules.loadZapperScript(from: Bundle.main)
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.zapperActive = (result as? String) == "on"
+                self.delegate?.tabDidUpdate(self)
+            }
+        }
+    }
+
+    func injectCosmeticRules() {
+        let host = webView.url?.host ?? ""
+        let css = ContentBlockerRules.cssForHost(
+            host,
+            store: store,
+            shieldEnabled: blockerEnabled,
+            bundle: Bundle.main
+        )
+        webView.evaluateJavaScript(ContentBlockerRules.injectCSSScript(css), completionHandler: nil)
+    }
+
+    func openInspectorWindow() {
+        if #available(macOS 13.3, *) {
+            webView.isInspectable = true
+        }
+        // Trigger WebKit's built-in inspector if available in private responder chain, otherwise show a quick JS console/inspector hint.
+        let sel = Selector(("_inspector"))
+        if webView.responds(to: sel), let inspector = webView.perform(sel)?.takeUnretainedValue() as? NSObject {
+            let showSel = Selector(("show:"))
+            if inspector.responds(to: showSel) {
+                inspector.perform(showSel, with: nil)
+                return
+            }
+        }
+        let alert = NSAlert()
+        alert.messageText = "Web Inspector Enabled"
+        alert.informativeText = "Right-click anywhere on the page and choose \"Inspect Element\", or attach Safari -> Develop -> SNC."
+        alert.runModal()
+    }
+
+    func handleScriptMessage(_ message: WKScriptMessage) {
+        guard message.name == "sncZapper",
+              let raw = message.body as? String,
+              let data = raw.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let host = json["host"] as? String,
+              let selector = json["selector"] as? String else {
+            return
+        }
+        store.addCustomSelector(selector, for: host)
+        delegate?.tab(self, didAddZapperRuleFor: host)
     }
 
     private func installObservers() {
@@ -80,6 +183,7 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.state.urlString = view.url?.absoluteString ?? self.state.urlString
+                    self.zapperActive = false
                     self.delegate?.tabDidUpdate(self)
                 }
             },
@@ -116,7 +220,22 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     // MARK: - WKNavigationDelegate
 
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        preferences.allowsContentJavaScript = jsEnabled
+        decisionHandler(.allow, preferences)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        injectCosmeticRules()
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        injectCosmeticRules()
         guard let url = webView.url else { return }
         let title = webView.title ?? url.absoluteString
         state.urlString = url.absoluteString

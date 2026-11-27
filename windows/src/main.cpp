@@ -4,15 +4,28 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <objbase.h>
 #include <wrl.h>
 #include <WebView2.h>
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+#ifndef DWMSBT_MAINWINDOW
+#define DWMSBT_MAINWINDOW 2
+#endif
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
@@ -24,17 +37,28 @@ constexpr int kIdBack = 102;
 constexpr int kIdForward = 103;
 constexpr int kIdReload = 104;
 constexpr int kIdShield = 105;
-constexpr int kIdAddress = 106;
-constexpr int kIdBookmark = 107;
-constexpr int kIdNewTab = 108;
-constexpr int kIdPrivateTab = 109;
-constexpr int kIdMenu = 110;
+constexpr int kIdZapper = 106;
+constexpr int kIdAddress = 107;
+constexpr int kIdBookmark = 108;
+constexpr int kIdNewTab = 109;
+constexpr int kIdPrivateTab = 110;
+constexpr int kIdDev = 111;
+constexpr int kIdMenu = 112;
 
 constexpr int kTabStripHeight = 30;
 constexpr int kToolbarHeight = 38;
 constexpr UINT_PTR kCmdBookmarkBase = 2000;
 constexpr UINT_PTR kCmdHistoryBase = 3000;
 constexpr UINT_PTR kCmdClearHistory = 4000;
+
+constexpr UINT kCmdShieldToggleSite = 5001;
+constexpr UINT kCmdShieldToggleGlobal = 5002;
+constexpr UINT kCmdShieldZapper = 5003;
+constexpr UINT kCmdShieldClearSite = 5004;
+
+constexpr UINT kCmdDevInspector = 6001;
+constexpr UINT kCmdDevZapper = 6002;
+constexpr UINT kCmdDevToggleJS = 6003;
 
 HMENU ctrl_id(int id) {
     return reinterpret_cast<HMENU>(static_cast<INT_PTR>(id));
@@ -58,6 +82,53 @@ std::string to_utf8(const wchar_t* wide) {
     return out;
 }
 
+std::string extract_json_string_field(const std::string& json, const std::string& key) {
+    std::string needle = "\"" + key + "\"";
+    auto pos = json.find(needle);
+    if (pos == std::string::npos) return {};
+    pos = json.find(':', pos + needle.size());
+    if (pos == std::string::npos) return {};
+    pos = json.find('"', pos + 1);
+    if (pos == std::string::npos) return {};
+    std::string out;
+    for (size_t i = pos + 1; i < json.size(); ++i) {
+        if (json[i] == '\\' && i + 1 < json.size()) {
+            out.push_back(json[i + 1]);
+            ++i;
+            continue;
+        }
+        if (json[i] == '"') break;
+        out.push_back(json[i]);
+    }
+    return out;
+}
+
+std::string load_shared_text(const std::string& filename, const std::string& fallback) {
+    std::vector<std::filesystem::path> candidates = {
+        std::filesystem::current_path() / "shared" / filename,
+        std::filesystem::current_path() / ".." / "shared" / filename,
+    };
+    for (const auto& p : candidates) {
+        std::ifstream in(p);
+        if (in.is_open()) {
+            std::ostringstream buf;
+            buf << in.rdbuf();
+            std::string s = buf.str();
+            if (!s.empty()) return s;
+        }
+    }
+    return fallback;
+}
+
+void enable_mica_titlebar(HWND hwnd) {
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    int backdrop = DWMSBT_MAINWINDOW;
+    DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    MARGINS margins = {0, 0, kTabStripHeight + kToolbarHeight, 0};
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
+
 struct Tab {
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webview;
@@ -67,6 +138,7 @@ struct Tab {
     bool is_loading = false;
     bool can_go_back = false;
     bool can_go_forward = false;
+    bool js_enabled = true;
     bool closed = false;
 };
 
@@ -77,10 +149,12 @@ struct AppState {
     HWND forward_btn = nullptr;
     HWND reload_btn = nullptr;
     HWND shield_btn = nullptr;
+    HWND zapper_btn = nullptr;
     HWND address_edit = nullptr;
     HWND bookmark_btn = nullptr;
     HWND new_tab_btn = nullptr;
     HWND private_btn = nullptr;
+    HWND dev_btn = nullptr;
     HWND menu_btn = nullptr;
     HFONT ui_font = nullptr;
 
@@ -108,6 +182,17 @@ Tab* current_tab() {
     return g_app.tabs[static_cast<size_t>(g_app.selected_index)].get();
 }
 
+void inject_cosmetic_rules(Tab* tab) {
+    if (!tab || tab->closed || !tab->webview) return;
+    std::string host = snc::extract_host(tab->url);
+    bool shield_active = g_app.blocker.enabled() && !g_app.store.is_host_allowlisted(host);
+    std::string cosmetic_css = load_shared_text("cosmetic_rules.css", std::string(snc::Blocker::default_cosmetic_css()));
+    std::string css = snc::Blocker::build_css_for_host(
+        shield_active, g_app.store.custom_selectors(host), cosmetic_css);
+    std::wstring js = to_wide(snc::Blocker::build_inject_css_script(css));
+    tab->webview->ExecuteScript(js.c_str(), nullptr);
+}
+
 void sync_toolbar() {
     Tab* tab = current_tab();
     if (!tab) return;
@@ -118,7 +203,11 @@ void sync_toolbar() {
     EnableWindow(g_app.back_btn, tab->can_go_back ? TRUE : FALSE);
     EnableWindow(g_app.forward_btn, tab->can_go_forward ? TRUE : FALSE);
     SetWindowTextW(g_app.reload_btn, tab->is_loading ? L"Stop" : L"Reload");
-    SetWindowTextW(g_app.shield_btn, g_app.blocker.enabled() ? L"Shield: ON" : L"Shield: OFF");
+
+    std::string host = snc::extract_host(tab->url);
+    bool paused = !host.empty() && g_app.store.is_host_allowlisted(host);
+    SetWindowTextW(g_app.shield_btn,
+                   !g_app.blocker.enabled() ? L"uB: OFF" : (paused ? L"uB: Paused" : L"uB: ON"));
 
     bool starred = !tab->url.empty() && g_app.store.is_bookmarked(tab->url);
     SetWindowTextW(g_app.bookmark_btn, starred ? L"*" : L"+Bm");
@@ -165,18 +254,20 @@ void layout_controls() {
         x += width + 4;
     };
 
-    place(g_app.back_btn, 36);
-    place(g_app.forward_btn, 36);
-    place(g_app.reload_btn, 62);
-    place(g_app.shield_btn, 86);
+    place(g_app.back_btn, 32);
+    place(g_app.forward_btn, 32);
+    place(g_app.reload_btn, 58);
+    place(g_app.shield_btn, 76);
+    place(g_app.zapper_btn, 40);
 
-    int right_buttons = 48 + 42 + 64 + 44 + 24;
+    int right_buttons = 42 + 38 + 56 + 44 + 42 + 28;
     int edit_w = (std::max)(120, w - x - right_buttons);
     place(g_app.address_edit, edit_w);
 
-    place(g_app.bookmark_btn, 44);
-    place(g_app.new_tab_btn, 40);
-    place(g_app.private_btn, 62);
+    place(g_app.bookmark_btn, 42);
+    place(g_app.new_tab_btn, 36);
+    place(g_app.private_btn, 54);
+    place(g_app.dev_btn, 42);
     place(g_app.menu_btn, 42);
 
     RECT wv_rc = webview_bounds();
@@ -222,6 +313,9 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
         Callback<ICoreWebView2WebResourceRequestedEventHandler>(
             [tab](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
                 if (tab->closed || !g_app.blocker.enabled() || !g_app.env) return S_OK;
+                std::string page_host = snc::extract_host(tab->url);
+                if (!page_host.empty() && g_app.store.is_host_allowlisted(page_host)) return S_OK;
+
                 COREWEBVIEW2_WEB_RESOURCE_CONTEXT ctx = COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL;
                 args->get_ResourceContext(&ctx);
                 if (ctx == COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT) return S_OK;
@@ -233,11 +327,30 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                 std::string req_url = to_utf8(raw_uri);
                 CoTaskMemFree(raw_uri);
 
-                std::string page_host = snc::extract_host(tab->url);
                 if (g_app.blocker.should_block(req_url, page_host)) {
                     ComPtr<ICoreWebView2WebResourceResponse> resp;
                     if (SUCCEEDED(g_app.env->CreateWebResourceResponse(nullptr, 204, L"Blocked", L"", &resp))) {
                         args->put_Response(resp.Get());
+                    }
+                }
+                return S_OK;
+            }).Get(),
+        nullptr);
+
+    tab->webview->add_WebMessageReceived(
+        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+            [tab](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+                if (tab->closed) return S_OK;
+                LPWSTR raw = nullptr;
+                if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
+                std::string msg = to_utf8(raw);
+                CoTaskMemFree(raw);
+                if (extract_json_string_field(msg, "type") == "zapper") {
+                    std::string host = extract_json_string_field(msg, "host");
+                    std::string sel = extract_json_string_field(msg, "selector");
+                    if (!host.empty() && !sel.empty()) {
+                        g_app.store.add_custom_selector(host, sel);
+                        inject_cosmetic_rules(tab.get());
                     }
                 }
                 return S_OK;
@@ -276,6 +389,7 @@ void attach_webview_to_tab(const std::shared_ptr<Tab>& tab, ICoreWebView2Control
                     if (!t.empty()) tab->title = t;
                     CoTaskMemFree(title);
                 }
+                inject_cosmetic_rules(tab.get());
                 g_app.store.record_history(tab->title, tab->url, tab->is_private);
                 update_caption_for_tab(tab.get());
                 if (tab.get() == current_tab()) sync_toolbar();
@@ -408,6 +522,81 @@ void navigate_from_address_bar() {
     }
 }
 
+void trigger_zapper() {
+    Tab* tab = current_tab();
+    if (!tab || !tab->webview) return;
+    std::string js = load_shared_text("zapper.js", std::string(snc::Blocker::default_zapper_script()));
+    tab->webview->ExecuteScript(to_wide(js).c_str(), nullptr);
+}
+
+void show_shield_menu() {
+    Tab* tab = current_tab();
+    std::string host = tab ? snc::extract_host(tab->url) : "";
+    bool paused = !host.empty() && g_app.store.is_host_allowlisted(host);
+
+    HMENU menu = CreatePopupMenu();
+    if (!host.empty()) {
+        std::string label = paused ? ("Resume uBlock on " + host) : ("Pause uBlock on " + host);
+        AppendMenuW(menu, MF_STRING, kCmdShieldToggleSite, to_wide(label).c_str());
+    }
+    AppendMenuW(menu, MF_STRING, kCmdShieldToggleGlobal,
+                g_app.blocker.enabled() ? L"Disable Global Shield (Ctrl+Shift+B)" : L"Enable Global Shield (Ctrl+Shift+B)");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kCmdShieldZapper, L"Element Zapper (Ctrl+Shift+Z)");
+    if (!host.empty() && !g_app.store.custom_selectors(host).empty()) {
+        AppendMenuW(menu, MF_STRING, kCmdShieldClearSite, to_wide("Clear Zapped Rules on " + host).c_str());
+    }
+
+    RECT rc{};
+    GetWindowRect(g_app.shield_btn, &rc);
+    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
+                              rc.left, rc.bottom, 0, g_app.hwnd, nullptr);
+    DestroyMenu(menu);
+
+    if (cmd == kCmdShieldToggleSite && !host.empty()) {
+        g_app.store.toggle_host_allowlist(host);
+        inject_cosmetic_rules(tab);
+        sync_toolbar();
+    } else if (cmd == kCmdShieldToggleGlobal) {
+        g_app.blocker.set_enabled(!g_app.blocker.enabled());
+        inject_cosmetic_rules(tab);
+        sync_toolbar();
+    } else if (cmd == kCmdShieldZapper) {
+        trigger_zapper();
+    } else if (cmd == kCmdShieldClearSite && !host.empty() && tab && tab->webview) {
+        g_app.store.clear_custom_selectors(host);
+        tab->webview->Reload();
+    }
+}
+
+void show_dev_menu() {
+    Tab* tab = current_tab();
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, kCmdDevInspector, L"Open DevTools (F12 / Ctrl+Shift+I)");
+    AppendMenuW(menu, MF_STRING, kCmdDevZapper, L"Element Zapper (Ctrl+Shift+Z)");
+    AppendMenuW(menu, MF_STRING, kCmdDevToggleJS,
+                (tab && !tab->js_enabled) ? L"Enable JavaScript on Tab" : L"Disable JavaScript on Tab");
+
+    RECT rc{};
+    GetWindowRect(g_app.dev_btn, &rc);
+    UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN,
+                              rc.right, rc.bottom, 0, g_app.hwnd, nullptr);
+    DestroyMenu(menu);
+
+    if (cmd == kCmdDevInspector && tab && tab->webview) {
+        tab->webview->OpenDevToolsWindow();
+    } else if (cmd == kCmdDevZapper) {
+        trigger_zapper();
+    } else if (cmd == kCmdDevToggleJS && tab && tab->webview) {
+        tab->js_enabled = !tab->js_enabled;
+        ComPtr<ICoreWebView2Settings> settings;
+        if (SUCCEEDED(tab->webview->get_Settings(&settings)) && settings) {
+            settings->put_IsScriptEnabled(tab->js_enabled ? TRUE : FALSE);
+        }
+        tab->webview->Reload();
+    }
+}
+
 LRESULT CALLBACK AddressSubclassProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
     if (msg == WM_KEYDOWN && wParam == VK_RETURN) {
         navigate_from_address_bar();
@@ -469,22 +658,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_CREATE: {
         g_app.hwnd = hwnd;
         g_app.ui_font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        enable_mica_titlebar(hwnd);
 
         g_app.tab_ctrl = CreateWindowExW(0, WC_TABCONTROLW, L"", WS_CHILD | WS_VISIBLE | TCS_TABS,
                                          0, 0, 100, kTabStripHeight, hwnd, ctrl_id(kIdTabCtrl), nullptr, nullptr);
-        g_app.back_btn = CreateWindowW(L"BUTTON", L"<", WS_CHILD | WS_VISIBLE, 0, 0, 36, 28, hwnd, ctrl_id(kIdBack), nullptr, nullptr);
-        g_app.forward_btn = CreateWindowW(L"BUTTON", L">", WS_CHILD | WS_VISIBLE, 0, 0, 36, 28, hwnd, ctrl_id(kIdForward), nullptr, nullptr);
-        g_app.reload_btn = CreateWindowW(L"BUTTON", L"Reload", WS_CHILD | WS_VISIBLE, 0, 0, 62, 28, hwnd, ctrl_id(kIdReload), nullptr, nullptr);
-        g_app.shield_btn = CreateWindowW(L"BUTTON", L"Shield: ON", WS_CHILD | WS_VISIBLE, 0, 0, 86, 28, hwnd, ctrl_id(kIdShield), nullptr, nullptr);
+        g_app.back_btn = CreateWindowW(L"BUTTON", L"<", WS_CHILD | WS_VISIBLE, 0, 0, 32, 28, hwnd, ctrl_id(kIdBack), nullptr, nullptr);
+        g_app.forward_btn = CreateWindowW(L"BUTTON", L">", WS_CHILD | WS_VISIBLE, 0, 0, 32, 28, hwnd, ctrl_id(kIdForward), nullptr, nullptr);
+        g_app.reload_btn = CreateWindowW(L"BUTTON", L"Reload", WS_CHILD | WS_VISIBLE, 0, 0, 58, 28, hwnd, ctrl_id(kIdReload), nullptr, nullptr);
+        g_app.shield_btn = CreateWindowW(L"BUTTON", L"uB: ON", WS_CHILD | WS_VISIBLE, 0, 0, 76, 28, hwnd, ctrl_id(kIdShield), nullptr, nullptr);
+        g_app.zapper_btn = CreateWindowW(L"BUTTON", L"Zap", WS_CHILD | WS_VISIBLE, 0, 0, 40, 28, hwnd, ctrl_id(kIdZapper), nullptr, nullptr);
         g_app.address_edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                                              0, 0, 300, 28, hwnd, ctrl_id(kIdAddress), nullptr, nullptr);
-        g_app.bookmark_btn = CreateWindowW(L"BUTTON", L"+Bm", WS_CHILD | WS_VISIBLE, 0, 0, 44, 28, hwnd, ctrl_id(kIdBookmark), nullptr, nullptr);
-        g_app.new_tab_btn = CreateWindowW(L"BUTTON", L"+", WS_CHILD | WS_VISIBLE, 0, 0, 40, 28, hwnd, ctrl_id(kIdNewTab), nullptr, nullptr);
-        g_app.private_btn = CreateWindowW(L"BUTTON", L"Private", WS_CHILD | WS_VISIBLE, 0, 0, 62, 28, hwnd, ctrl_id(kIdPrivateTab), nullptr, nullptr);
+        g_app.bookmark_btn = CreateWindowW(L"BUTTON", L"+Bm", WS_CHILD | WS_VISIBLE, 0, 0, 42, 28, hwnd, ctrl_id(kIdBookmark), nullptr, nullptr);
+        g_app.new_tab_btn = CreateWindowW(L"BUTTON", L"+", WS_CHILD | WS_VISIBLE, 0, 0, 36, 28, hwnd, ctrl_id(kIdNewTab), nullptr, nullptr);
+        g_app.private_btn = CreateWindowW(L"BUTTON", L"Priv", WS_CHILD | WS_VISIBLE, 0, 0, 54, 28, hwnd, ctrl_id(kIdPrivateTab), nullptr, nullptr);
+        g_app.dev_btn = CreateWindowW(L"BUTTON", L"Dev", WS_CHILD | WS_VISIBLE, 0, 0, 42, 28, hwnd, ctrl_id(kIdDev), nullptr, nullptr);
         g_app.menu_btn = CreateWindowW(L"BUTTON", L"Menu", WS_CHILD | WS_VISIBLE, 0, 0, 42, 28, hwnd, ctrl_id(kIdMenu), nullptr, nullptr);
 
         for (HWND c : {g_app.tab_ctrl, g_app.back_btn, g_app.forward_btn, g_app.reload_btn, g_app.shield_btn,
-                       g_app.address_edit, g_app.bookmark_btn, g_app.new_tab_btn, g_app.private_btn, g_app.menu_btn}) {
+                       g_app.zapper_btn, g_app.address_edit, g_app.bookmark_btn, g_app.new_tab_btn,
+                       g_app.private_btn, g_app.dev_btn, g_app.menu_btn}) {
             SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(g_app.ui_font), TRUE);
         }
         SetWindowSubclass(g_app.address_edit, AddressSubclassProc, 1, 0);
@@ -527,10 +720,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 else tab->webview->Reload();
             }
             break;
-        case kIdShield:
-            g_app.blocker.set_enabled(!g_app.blocker.enabled());
-            sync_toolbar();
-            break;
+        case kIdShield: show_shield_menu(); break;
+        case kIdZapper: trigger_zapper(); break;
         case kIdBookmark:
             if (tab) {
                 g_app.store.toggle_bookmark(tab->title, tab->url);
@@ -539,6 +730,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         case kIdNewTab: add_tab(std::string(snc::kDefaultHomeUrl), false); break;
         case kIdPrivateTab: add_tab(std::string(snc::kDefaultHomeUrl), true); break;
+        case kIdDev: show_dev_menu(); break;
         case kIdMenu: show_bookmarks_history_menu(); break;
         default: break;
         }
@@ -552,6 +744,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             tab->webview.Reset();
         }
         g_app.tabs.clear();
+        g_app.env.Reset();
         PostQuitMessage(0);
         return 0;
     default:
@@ -565,6 +758,10 @@ bool handle_accelerator(const MSG& msg) {
     bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
+    if (msg.wParam == VK_F12) {
+        if (auto* tab = current_tab(); tab && tab->webview) tab->webview->OpenDevToolsWindow();
+        return true;
+    }
     if (ctrl && !shift && !alt) {
         if (msg.wParam == 'T') { add_tab(std::string(snc::kDefaultHomeUrl), false); return true; }
         if (msg.wParam == 'W') { close_current_tab(); return true; }
@@ -577,7 +774,17 @@ bool handle_accelerator(const MSG& msg) {
         if (msg.wParam == 'D') { SendMessageW(g_app.hwnd, WM_COMMAND, kIdBookmark, 0); return true; }
     } else if (ctrl && shift && !alt) {
         if (msg.wParam == 'N') { add_tab(std::string(snc::kDefaultHomeUrl), true); return true; }
-        if (msg.wParam == 'B') { SendMessageW(g_app.hwnd, WM_COMMAND, kIdShield, 0); return true; }
+        if (msg.wParam == 'B') {
+            g_app.blocker.set_enabled(!g_app.blocker.enabled());
+            inject_cosmetic_rules(current_tab());
+            sync_toolbar();
+            return true;
+        }
+        if (msg.wParam == 'Z') { trigger_zapper(); return true; }
+        if (msg.wParam == 'I') {
+            if (auto* tab = current_tab(); tab && tab->webview) tab->webview->OpenDevToolsWindow();
+            return true;
+        }
     } else if (alt && !ctrl) {
         if (msg.wParam == VK_LEFT) { SendMessageW(g_app.hwnd, WM_COMMAND, kIdBack, 0); return true; }
         if (msg.wParam == VK_RIGHT) { SendMessageW(g_app.hwnd, WM_COMMAND, kIdForward, 0); return true; }
@@ -604,7 +811,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     HWND hwnd = CreateWindowExW(
         0, wc.lpszClassName, L"SNC",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 1120, 740,
+        CW_USEDEFAULT, CW_USEDEFAULT, 1160, 760,
         nullptr, nullptr, hInstance, nullptr);
 
     ShowWindow(hwnd, nCmdShow);
@@ -617,6 +824,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
         DispatchMessageW(&msg);
     }
 
+    for (auto& tab : g_app.tabs) {
+        tab->closed = true;
+        if (tab->controller) tab->controller->Close();
+        tab->controller.Reset();
+        tab->webview.Reset();
+    }
+    g_app.tabs.clear();
+    g_app.env.Reset();
     CoUninitialize();
     return static_cast<int>(msg.wParam);
 }

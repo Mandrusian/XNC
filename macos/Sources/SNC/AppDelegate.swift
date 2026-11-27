@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenu()
-        compileBlockerRules()
+        recompileBlockerRules()
         openNewWindow()
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -62,6 +62,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func toggleCurrentHostAllowlistAction(_ sender: Any?) {
+        guard let host = activeWindow()?.currentHost(), !host.isEmpty else { return }
+        store.toggleHostAllowlist(host)
+        recompileBlockerRules()
+    }
+
+    @objc func toggleZapperAction(_ sender: Any?) {
+        activeWindow()?.toggleZapper()
+    }
+
+    @objc func openWebInspectorAction(_ sender: Any?) {
+        activeWindow()?.openWebInspector()
+    }
+
+    @objc func openJSConsoleAction(_ sender: Any?) {
+        activeWindow()?.showJSConsole()
+    }
+
+    @objc func viewPageSourceAction(_ sender: Any?) {
+        activeWindow()?.viewPageSource()
+    }
+
+    @objc func toggleJavaScriptAction(_ sender: Any?) {
+        activeWindow()?.toggleJavaScript()
+    }
+
+    @objc func setUserAgentAction(_ sender: NSMenuItem) {
+        let ua = sender.representedObject as? String
+        activeWindow()?.setCustomUserAgent(ua)
+    }
+
+    @objc func clearBrowsingDataAction(_ sender: Any?) {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        WKWebsiteDataStore.default().removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
+            DispatchQueue.main.async {
+                self?.activeWindow()?.reloadOrStopCurrentTab()
+            }
+        }
+    }
+
     @objc func nextTabAction(_ sender: Any?) {
         activeWindow()?.selectNextTab()
     }
@@ -72,6 +112,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func windowDidClose(_ controller: BrowserWindowController) {
         windows.removeAll { $0 === controller }
+    }
+
+    func recompileBlockerRules() {
+        let rulesJSON = ContentBlockerRules.loadRulesJSON(
+            from: Bundle.main,
+            excludingAllowlistedHosts: store.allowlistedHosts
+        )
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: ContentBlockerRules.ruleListIdentifier,
+            encodedContentRuleList: rulesJSON
+        ) { [weak self] list, _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.contentRuleList = list
+                for win in self.windows {
+                    win.applyBlockerState(enabled: self.blockerEnabled, ruleList: list)
+                }
+            }
+        }
     }
 
     private func openNewWindow() {
@@ -86,22 +145,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return key
         }
         return windows.first
-    }
-
-    private func compileBlockerRules() {
-        let rulesJSON = ContentBlockerRules.loadRulesJSON(from: Bundle.main)
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: ContentBlockerRules.ruleListIdentifier,
-            encodedContentRuleList: rulesJSON
-        ) { [weak self] list, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.contentRuleList = list
-                for win in self.windows {
-                    win.applyBlockerState(enabled: self.blockerEnabled, ruleList: list)
-                }
-            }
-        }
     }
 
     private func setupMenu() {
@@ -147,9 +190,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(withTitle: "Reload Page", action: #selector(reloadPageAction(_:)), keyEquivalent: "r")
         viewMenu.addItem(withTitle: "Back", action: #selector(goBackAction(_:)), keyEquivalent: "[")
         viewMenu.addItem(withTitle: "Forward", action: #selector(goForwardAction(_:)), keyEquivalent: "]")
-        let blockerItem = NSMenuItem(title: "Toggle Ad & Tracker Blocker", action: #selector(toggleBlockerAction(_:)), keyEquivalent: "B")
+        viewMenu.addItem(.separator())
+        let blockerItem = NSMenuItem(title: "Toggle uBlock Shield", action: #selector(toggleBlockerAction(_:)), keyEquivalent: "B")
         blockerItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(blockerItem)
+        let zapperItem = NSMenuItem(title: "Element Zapper", action: #selector(toggleZapperAction(_:)), keyEquivalent: "Z")
+        zapperItem.keyEquivalentModifierMask = [.command, .shift]
+        viewMenu.addItem(zapperItem)
         viewMenu.addItem(.separator())
         let nextTab = NSMenuItem(title: "Next Tab", action: #selector(nextTabAction(_:)), keyEquivalent: "\t")
         nextTab.keyEquivalentModifierMask = [.control]
@@ -158,6 +205,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         prevTab.keyEquivalentModifierMask = [.control, .shift]
         viewMenu.addItem(prevTab)
         viewMenuItem.submenu = viewMenu
+
+        let devMenuItem = NSMenuItem()
+        mainMenu.addItem(devMenuItem)
+        let devMenu = NSMenu(title: "Develop")
+        let inspItem = NSMenuItem(title: "Open Web Inspector", action: #selector(openWebInspectorAction(_:)), keyEquivalent: "i")
+        inspItem.keyEquivalentModifierMask = [.command, .option]
+        devMenu.addItem(inspItem)
+        let consoleItem = NSMenuItem(title: "JavaScript Console…", action: #selector(openJSConsoleAction(_:)), keyEquivalent: "j")
+        consoleItem.keyEquivalentModifierMask = [.command, .option]
+        devMenu.addItem(consoleItem)
+        let sourceItem = NSMenuItem(title: "View Page Source", action: #selector(viewPageSourceAction(_:)), keyEquivalent: "u")
+        sourceItem.keyEquivalentModifierMask = [.command, .option]
+        devMenu.addItem(sourceItem)
+        devMenu.addItem(.separator())
+        let zapDevItem = NSMenuItem(title: "Element Zapper", action: #selector(toggleZapperAction(_:)), keyEquivalent: "Z")
+        zapDevItem.keyEquivalentModifierMask = [.command, .shift]
+        devMenu.addItem(zapDevItem)
+        devMenu.addItem(withTitle: "Toggle JavaScript on Tab", action: #selector(toggleJavaScriptAction(_:)), keyEquivalent: "")
+
+        let uaItem = NSMenuItem(title: "User-Agent", action: nil, keyEquivalent: "")
+        let uaMenu = NSMenu(title: "User-Agent")
+        let presets: [(String, String?)] = [
+            ("Default (WebKit)", nil),
+            ("Safari (macOS)", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"),
+            ("Firefox (macOS)", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:132.0) Gecko/20100101 Firefox/132.0"),
+            ("Mobile Safari (iPhone)", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1")
+        ]
+        for (title, ua) in presets {
+            let item = NSMenuItem(title: title, action: #selector(setUserAgentAction(_:)), keyEquivalent: "")
+            item.representedObject = ua
+            uaMenu.addItem(item)
+        }
+        uaItem.submenu = uaMenu
+        devMenu.addItem(uaItem)
+
+        devMenu.addItem(.separator())
+        devMenu.addItem(withTitle: "Clear Browsing Data & Cache", action: #selector(clearBrowsingDataAction(_:)), keyEquivalent: "")
+        devMenuItem.submenu = devMenu
 
         let bookmarksMenuItem = NSMenuItem()
         mainMenu.addItem(bookmarksMenuItem)

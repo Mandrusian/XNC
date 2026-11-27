@@ -2,39 +2,42 @@
 
 **SNC** is a super-lightweight (<5 MB native binary, well under 20–30 MB), Chromium-free desktop web browser built with native OS UI toolkits and system web engines:
 
-- **macOS:** Swift + AppKit + `WKWebView` (WebKit)
-- **Linux:** C++20 + GTK3 + `WebKit2GTK 4.1` (WebKit)
-- **Windows:** C++20 + Win32 + `WebView2`
-
-Because SNC uses the OS-provided WebKit / WebView runtime instead of bundling Chromium or Electron, each binary stays under a few megabytes with fast cold starts and minimal memory overhead.
+- **macOS:** Swift + AppKit + `WKWebView` (full-bleed transparent titlebar + `.underWindowBackground` vibrancy blur)
+- **Linux:** C++20 + GTK3 `GtkHeaderBar` + `WebKit2GTK 4.1`
+- **Windows:** C++20 + Win32 + `WebView2` + Windows 11 Mica backdrop (`DwmSetWindowAttribute`)
 
 ## Features
 
-- Multi-tab browsing + isolated **Private Tabs** (ephemeral storage, excluded from history)
-- Smart address bar (normalizes URLs, defaults local dev hosts to `http://`, searches via DuckDuckGo)
-- Built-in third-party ad & tracker blocker (`Shield`) powered by `shared/blocklist.json` / `shared/blocklist_domains.txt`
-- Local bookmarks and capped browsing history (up to 500 entries)
-- Native keyboard shortcuts across macOS, Linux, and Windows
+- **Full-Bleed Native Chrome & Vibrancy/Mica:** Tabs and translucent toolbar reach straight into the titlebar on macOS (vibrancy behind-window blur), integrated `GtkHeaderBar` on Linux, and Windows 11 Mica titlebar on Windows.
+- **uBlock-Style Shield:** Network-level third-party ad/tracker domain blocking (`64` high-impact domains), cosmetic CSS element hiding (`shared/cosmetic_rules.css`), and per-site Pause/Resume allowlisting.
+- **Interactive Element Zapper (`Zap`):** Hover over page elements, **Click** to remove immediately (`U` to undo, `Esc` to exit), or **Shift+Click** to permanently hide the selector for that host.
+- **Developer Tools (`Dev`):**
+  - Web Inspector / DevTools (`Cmd+Opt+I` on macOS, `Ctrl+Shift+I` / `F12` on Linux & Windows)
+  - JavaScript Console (`Cmd+Opt+J` on macOS) & View Page Source (`Cmd+Opt+U` on macOS)
+  - Per-tab JavaScript toggle, User-Agent presets (macOS), and Clear Cookies/Cache
+- **Multi-Tab + Private Tabs:** Isolated ephemeral/in-private tabs excluded from local history (`BrowserStore`).
+- **Smart Address Bar:** Normalizes URLs, defaults `localhost`/`127.0.0.1` to `http://`, searches via DuckDuckGo.
 
 ## Keyboard Shortcuts
 
 | Action | macOS | Linux / Windows |
 | --- | --- | --- |
-| New Tab | `Cmd+T` | `Ctrl+T` |
-| New Private Tab | `Cmd+Shift+N` | `Ctrl+Shift+N` |
+| New Tab / Private Tab | `Cmd+T` / `Cmd+Shift+N` | `Ctrl+T` / `Ctrl+Shift+N` |
 | Close Tab | `Cmd+W` | `Ctrl+W` |
 | Focus Address Bar | `Cmd+L` | `Ctrl+L` |
 | Reload / Stop | `Cmd+R` | `Ctrl+R` |
 | Back / Forward | `Cmd+[` / `Cmd+]` | `Alt+Left` / `Alt+Right` |
 | Bookmark Page | `Cmd+D` | `Ctrl+D` |
-| Toggle Tracker Blocker | `Cmd+Shift+B` | `Ctrl+Shift+B` |
+| Toggle uBlock Shield | `Cmd+Shift+B` | `Ctrl+Shift+B` |
+| Element Zapper | `Cmd+Shift+Z` | `Ctrl+Shift+Z` |
+| Web Inspector / Console / Source | `Cmd+Opt+I` / `J` / `U` | `Ctrl+Shift+I` or `F12` |
 
 ## Build & Run
 
 ### Shared C++20 Core Tests (all platforms)
 
 ```bash
-cmake -S core -B core/build
+cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
 cmake --build core/build
 ctest --test-dir core/build --output-on-failure
 ```

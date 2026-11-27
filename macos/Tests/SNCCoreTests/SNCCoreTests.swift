@@ -20,16 +20,21 @@ struct SNCCoreTests {
         #expect(URLResolver.displayHost(for: URL(string: "https://www.apple.com/safari/")) == "apple.com")
     }
 
-    @Test("Content blocker JSON schema")
+    @Test("Content blocker JSON schema, allowlist, and cosmetic CSS")
     func contentBlockerRulesJSON() {
         let json = ContentBlockerRules.defaultRulesJSON()
         #expect(ContentBlockerRules.isValidRulesJSON(json))
         #expect(json.contains("doubleclick"))
         #expect(!json.contains("(|$)"))
+
+        let withAllowlist = ContentBlockerRules.defaultRulesJSON(excludingAllowlistedHosts: ["example.com"])
+        #expect(ContentBlockerRules.isValidRulesJSON(withAllowlist))
+        #expect(withAllowlist.contains("ignore-previous-rules"))
         #expect(!ContentBlockerRules.isValidRulesJSON("not json"))
+        #expect(!ContentBlockerRules.defaultZapperScript.isEmpty)
     }
 
-    @Test("BrowserStore bookmark and history persistence")
+    @Test("BrowserStore persistence, allowlist, and zapper rules")
     func browserStorePersistenceAndPrivacy() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("snc_swift_test_\(UUID().uuidString)", isDirectory: true)
@@ -45,9 +50,26 @@ struct SNCCoreTests {
         store.recordHistory(title: "WebKit", url: "https://webkit.org/", isPrivate: false)
         #expect(store.history.count == 1)
 
+        #expect(store.toggleHostAllowlist("Example.com"))
+        #expect(store.isHostAllowlisted("example.com"))
+        store.addCustomSelector("#cookie-banner", for: "news.ycombinator.com")
+        store.addCustomSelector("#cookie-banner", for: "news.ycombinator.com")
+        #expect(store.customSelectors(for: "news.ycombinator.com") == ["#cookie-banner"])
+
+        let css = ContentBlockerRules.cssForHost("news.ycombinator.com", store: store, shieldEnabled: true)
+        #expect(css.contains("adsbygoogle"))
+        #expect(css.contains("#cookie-banner { display: none !important; }"))
+
         let reloaded = BrowserStore(directoryURL: tempDir)
         #expect(reloaded.isBookmarked(url: "https://duckduckgo.com/"))
         #expect(reloaded.history.first?.title == "WebKit")
+        #expect(reloaded.isHostAllowlisted("example.com"))
+        #expect(reloaded.customSelectors(for: "news.ycombinator.com") == ["#cookie-banner"])
+
+        reloaded.clearCustomSelectors(for: "news.ycombinator.com")
+        #expect(reloaded.customSelectors(for: "news.ycombinator.com").isEmpty)
+        #expect(!reloaded.toggleHostAllowlist("example.com"))
+        #expect(!reloaded.isHostAllowlisted("example.com"))
 
         #expect(!reloaded.toggleBookmark(title: "DuckDuckGo", url: "https://duckduckgo.com/"))
         #expect(!reloaded.isBookmarked(url: "https://duckduckgo.com/"))

@@ -1,6 +1,7 @@
 #include "snc/storage.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
@@ -9,6 +10,16 @@
 namespace snc {
 
 namespace {
+
+std::string normalize_host(std::string_view raw) {
+    while (!raw.empty() && std::isspace(static_cast<unsigned char>(raw.front()))) raw.remove_prefix(1);
+    while (!raw.empty() && std::isspace(static_cast<unsigned char>(raw.back()))) raw.remove_suffix(1);
+    std::string out(raw);
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
 
 std::string escape_field(std::string_view s) {
     std::string out;
@@ -94,6 +105,9 @@ std::filesystem::path BrowserStore::default_data_dir() {
 bool BrowserStore::load() {
     bookmarks_.clear();
     history_.clear();
+    allowlisted_hosts_.clear();
+    custom_selectors_.clear();
+
     std::filesystem::path file = data_dir_ / "store.tsv";
     std::ifstream in(file);
     if (!in.is_open()) return false;
@@ -109,6 +123,14 @@ bool BrowserStore::load() {
             std::int64_t ts = 0;
             try { ts = std::stoll(cols[3]); } catch (...) { ts = 0; }
             history_.push_back(HistoryEntry{cols[1], cols[2], ts});
+        } else if (cols[0] == "A" && cols.size() >= 2) {
+            std::string host = normalize_host(cols[1]);
+            if (!host.empty()) allowlisted_hosts_.push_back(std::move(host));
+        } else if (cols[0] == "Z" && cols.size() >= 3) {
+            std::string host = normalize_host(cols[1]);
+            if (!host.empty() && !cols[2].empty()) {
+                custom_selectors_[host].push_back(cols[2]);
+            }
         }
     }
     return true;
@@ -128,6 +150,14 @@ bool BrowserStore::save() const {
     }
     for (const auto& h : history_) {
         out << "H\t" << escape_field(h.title) << "\t" << escape_field(h.url) << "\t" << h.timestamp << "\n";
+    }
+    for (const auto& host : allowlisted_hosts_) {
+        out << "A\t" << escape_field(host) << "\n";
+    }
+    for (const auto& [host, selectors] : custom_selectors_) {
+        for (const auto& sel : selectors) {
+            out << "Z\t" << escape_field(host) << "\t" << escape_field(sel) << "\n";
+        }
     }
     return out.good();
 }
@@ -194,6 +224,50 @@ void BrowserStore::record_history(std::string title, std::string url, bool is_pr
 void BrowserStore::clear_history() {
     history_.clear();
     save();
+}
+
+bool BrowserStore::is_host_allowlisted(std::string_view host) const {
+    std::string norm = normalize_host(host);
+    if (norm.empty()) return false;
+    return std::find(allowlisted_hosts_.begin(), allowlisted_hosts_.end(), norm) != allowlisted_hosts_.end();
+}
+
+bool BrowserStore::toggle_host_allowlist(std::string_view host) {
+    std::string norm = normalize_host(host);
+    if (norm.empty()) return false;
+    auto it = std::find(allowlisted_hosts_.begin(), allowlisted_hosts_.end(), norm);
+    if (it != allowlisted_hosts_.end()) {
+        allowlisted_hosts_.erase(it);
+        save();
+        return false;
+    }
+    allowlisted_hosts_.push_back(std::move(norm));
+    save();
+    return true;
+}
+
+std::vector<std::string> BrowserStore::custom_selectors(std::string_view host) const {
+    std::string norm = normalize_host(host);
+    auto it = custom_selectors_.find(norm);
+    if (it == custom_selectors_.end()) return {};
+    return it->second;
+}
+
+void BrowserStore::add_custom_selector(std::string_view host, std::string selector) {
+    std::string norm = normalize_host(host);
+    if (norm.empty() || selector.empty()) return;
+    auto& list = custom_selectors_[norm];
+    if (std::find(list.begin(), list.end(), selector) == list.end()) {
+        list.push_back(std::move(selector));
+        save();
+    }
+}
+
+void BrowserStore::clear_custom_selectors(std::string_view host) {
+    std::string norm = normalize_host(host);
+    if (custom_selectors_.erase(norm) > 0) {
+        save();
+    }
 }
 
 } // namespace snc

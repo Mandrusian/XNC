@@ -25,6 +25,12 @@ strip -x "$APP_DIR/Contents/MacOS/SNC" || true
 if [[ -f "$REPO_ROOT/shared/blocklist.json" ]]; then
   cp "$REPO_ROOT/shared/blocklist.json" "$APP_DIR/Contents/Resources/blocklist.json"
 fi
+if [[ -f "$REPO_ROOT/shared/cosmetic_rules.css" ]]; then
+  cp "$REPO_ROOT/shared/cosmetic_rules.css" "$APP_DIR/Contents/Resources/cosmetic_rules.css"
+fi
+if [[ -f "$REPO_ROOT/shared/zapper.js" ]]; then
+  cp "$REPO_ROOT/shared/zapper.js" "$APP_DIR/Contents/Resources/zapper.js"
+fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

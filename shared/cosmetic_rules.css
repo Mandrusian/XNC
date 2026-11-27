@@ -1,0 +1,19 @@
+/* SNC built-in cosmetic ad & annoyance filters */
+ins.adsbygoogle,
+div[id^="google_ads_iframe"],
+div[id^="div-gpt-ad"],
+iframe[src*="doubleclick.net"],
+iframe[src*="googlesyndication.com"],
+[data-ad-slot],
+[data-google-query-id],
+.taboola-container,
+#taboola-below-article-thumbnails,
+.OUTBRAIN,
+[class*="sponsored-post"],
+[class*="ad-banner"],
+#onetrust-banner-sdk,
+#onetrust-consent-sdk,
+#CybotCookiebotDialog,
+.fc-consent-root {
+  display: none !important;
+}

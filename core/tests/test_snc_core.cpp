@@ -64,6 +64,12 @@ void test_storage() {
         store.record_history("Example Updated", "https://example.com", false, 205);
         SNC_CHECK(store.history().size() == 1);
         SNC_CHECK(store.history().front().title == "Example Updated");
+
+        SNC_CHECK(store.toggle_host_allowlist("Example.com"));
+        SNC_CHECK(store.is_host_allowlisted("example.com"));
+        store.add_custom_selector("news.ycombinator.com", ".ad-banner");
+        store.add_custom_selector("news.ycombinator.com", ".ad-banner");
+        SNC_CHECK(store.custom_selectors("news.ycombinator.com").size() == 1);
     }
 
     {
@@ -72,9 +78,20 @@ void test_storage() {
         SNC_CHECK(reloaded.bookmarks().front().title == "DuckDuckGo\tHome");
         SNC_CHECK(reloaded.history().size() == 1);
         SNC_CHECK(reloaded.history().front().timestamp == 205);
+        SNC_CHECK(reloaded.is_host_allowlisted("example.com"));
+        SNC_CHECK(!reloaded.toggle_host_allowlist("example.com"));
+        SNC_CHECK(!reloaded.is_host_allowlisted("example.com"));
+        SNC_CHECK(reloaded.custom_selectors("news.ycombinator.com").size() == 1);
+        reloaded.clear_custom_selectors("news.ycombinator.com");
+        SNC_CHECK(reloaded.custom_selectors("news.ycombinator.com").empty());
         SNC_CHECK(!reloaded.toggle_bookmark("DuckDuckGo\tHome", "https://duckduckgo.com/"));
         SNC_CHECK(!reloaded.is_bookmarked("https://duckduckgo.com/"));
     }
+
+    auto css = snc::Blocker::build_css_for_host(true, {"#annoying"});
+    SNC_CHECK(css.find("adsbygoogle") != std::string::npos);
+    SNC_CHECK(css.find("#annoying { display: none !important; }") != std::string::npos);
+    SNC_CHECK(!snc::Blocker::default_zapper_script().empty());
 
     std::filesystem::remove_all(tmp_dir);
 }

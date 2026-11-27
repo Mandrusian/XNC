@@ -31,6 +31,7 @@ target_link_libraries(snc PRIVATE
     user32
     gdi32
     comctl32
+    dwmapi
     ole32
     shlwapi
     version

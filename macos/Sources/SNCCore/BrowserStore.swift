@@ -22,18 +22,22 @@ public struct HistoryEntry: Codable, Equatable {
     }
 }
 
-/// Lightweight JSON persistence for bookmarks and non-private browsing history.
+/// Lightweight JSON persistence for bookmarks, non-private history, allowlisted sites, and zapper selectors.
 public final class BrowserStore {
     public static let maxHistoryEntries = 500
 
     private struct Snapshot: Codable {
         var bookmarks: [Bookmark]
         var history: [HistoryEntry]
+        var allowlistedHosts: [String]?
+        var customSelectors: [String: [String]]?
     }
 
     public let directoryURL: URL
     public private(set) var bookmarks: [Bookmark] = []
     public private(set) var history: [HistoryEntry] = []
+    public private(set) var allowlistedHosts: [String] = []
+    public private(set) var customSelectors: [String: [String]] = [:]
 
     private var storeFileURL: URL {
         directoryURL.appendingPathComponent("store.json")
@@ -57,12 +61,19 @@ public final class BrowserStore {
         if let snapshot = try? decoder.decode(Snapshot.self, from: data) {
             self.bookmarks = snapshot.bookmarks
             self.history = snapshot.history
+            self.allowlistedHosts = snapshot.allowlistedHosts ?? []
+            self.customSelectors = snapshot.customSelectors ?? [:]
         }
     }
 
     public func save() {
         try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-        let snapshot = Snapshot(bookmarks: bookmarks, history: history)
+        let snapshot = Snapshot(
+            bookmarks: bookmarks,
+            history: history,
+            allowlistedHosts: allowlistedHosts,
+            customSelectors: customSelectors
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
         encoder.dateEncodingStrategy = .iso8601
@@ -110,5 +121,52 @@ public final class BrowserStore {
     public func clearHistory() {
         history.removeAll()
         save()
+    }
+
+    private func normalizeHost(_ host: String) -> String {
+        host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    public func isHostAllowlisted(_ host: String) -> Bool {
+        let norm = normalizeHost(host)
+        guard !norm.isEmpty else { return false }
+        return allowlistedHosts.contains(norm)
+    }
+
+    @discardableResult
+    public func toggleHostAllowlist(_ host: String) -> Bool {
+        let norm = normalizeHost(host)
+        guard !norm.isEmpty else { return false }
+        if let idx = allowlistedHosts.firstIndex(of: norm) {
+            allowlistedHosts.remove(at: idx)
+            save()
+            return false
+        }
+        allowlistedHosts.append(norm)
+        save()
+        return true
+    }
+
+    public func customSelectors(for host: String) -> [String] {
+        customSelectors[normalizeHost(host)] ?? []
+    }
+
+    public func addCustomSelector(_ selector: String, for host: String) {
+        let norm = normalizeHost(host)
+        let sel = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !norm.isEmpty, !sel.isEmpty else { return }
+        var list = customSelectors[norm] ?? []
+        if !list.contains(sel) {
+            list.append(sel)
+            customSelectors[norm] = list
+            save()
+        }
+    }
+
+    public func clearCustomSelectors(for host: String) {
+        let norm = normalizeHost(host)
+        if customSelectors.removeValue(forKey: norm) != nil {
+            save()
+        }
     }
 }
