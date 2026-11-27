@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(xnc_windows VERSION 0.2.0 LANGUAGES CXX)
+project(xnc_windows VERSION 0.2.1 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,7 +20,7 @@ else()
     set(WEBVIEW2_ARCH "x86")
 endif()
 
-add_executable(xnc WIN32 src/main.cpp)
+add_executable(xnc WIN32 src/main.cpp resources.rc)
 
 target_include_directories(xnc PRIVATE
     "${WEBVIEW2_DIR}/build/native/include"
@@ -31,8 +31,10 @@ target_link_libraries(xnc PRIVATE
     "${WEBVIEW2_DIR}/build/native/${WEBVIEW2_ARCH}/WebView2LoaderStatic.lib"
     user32
     gdi32
+    gdiplus
     comctl32
     dwmapi
+    uxtheme
     ole32
     shlwapi
     version
