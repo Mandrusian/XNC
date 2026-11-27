@@ -659,7 +659,7 @@ void paint_chrome(HDC hdc) {
 
         // Subtle glass wash across chrome header
         Gdiplus::SolidBrush wash(Gdiplus::Color(48, 12, 14, 20));
-        g.FillRectangle(&wash, 0, 0, static_cast<Gdiplus::INT>(chrome_rc.right), static_cast<Gdiplus::INT>(chrome_rc.bottom));
+        g.FillRectangle(&wash, 0, 0, static_cast<int>(chrome_rc.right), static_cast<int>(chrome_rc.bottom));
 
         // Draw tabs + caption buttons + toolbar icons
         for (const auto& hb : g_app.hitboxes) {
@@ -707,10 +707,10 @@ void paint_chrome(HDC hdc) {
                     Gdiplus::SolidBrush br(bg);
                     g.FillRectangle(
                         &br,
-                        static_cast<Gdiplus::INT>(hb.rect.left),
-                        static_cast<Gdiplus::INT>(hb.rect.top),
-                        static_cast<Gdiplus::INT>(hb.rect.right - hb.rect.left),
-                        static_cast<Gdiplus::INT>(hb.rect.bottom - hb.rect.top));
+                        static_cast<int>(hb.rect.left),
+                        static_cast<int>(hb.rect.top),
+                        static_cast<int>(hb.rect.right - hb.rect.left),
+                        static_cast<int>(hb.rect.bottom - hb.rect.top));
                 }
                 float cx = (hb.rect.left + hb.rect.right) * 0.5f;
                 float cy = (hb.rect.top + hb.rect.bottom) * 0.5f;
@@ -746,10 +746,10 @@ void paint_chrome(HDC hdc) {
         if (tab && tab->is_loading) {
             int pw = static_cast<int>(chrome_rc.right * std::clamp(tab->progress, 0.08, 1.0));
             Gdiplus::SolidBrush prog(Gdiplus::Color(255, 59, 130, 246));
-            g.FillRectangle(&prog, 0, static_cast<Gdiplus::INT>(chrome_rc.bottom - px(3)), pw, px(2));
+            g.FillRectangle(&prog, 0, static_cast<int>(chrome_rc.bottom - px(3)), pw, px(2));
         }
         Gdiplus::SolidBrush div(Gdiplus::Color(55, 255, 255, 255));
-        g.FillRectangle(&div, 0, static_cast<Gdiplus::INT>(chrome_rc.bottom - 1), static_cast<Gdiplus::INT>(chrome_rc.right), 1);
+        g.FillRectangle(&div, 0, static_cast<int>(chrome_rc.bottom - 1), static_cast<int>(chrome_rc.right), 1);
     }
 
     EndBufferedPaint(pbp, TRUE);
