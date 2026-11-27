@@ -1,12 +1,12 @@
-#include "snc/blocker.hpp"
-#include "snc/url_resolver.hpp"
+#include "xnc/blocker.hpp"
+#include "xnc/url_resolver.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <sstream>
 
-namespace snc {
+namespace xnc {
 
 namespace {
 
@@ -26,6 +26,18 @@ bool host_matches_domain(std::string_view host, std::string_view domain) {
     if (host.size() <= domain.size()) return false;
     size_t prefix_len = host.size() - domain.size();
     return host[prefix_len - 1] == '.' && host.substr(prefix_len) == domain;
+}
+
+std::string escape_backticks(std::string_view css) {
+    std::string escaped;
+    escaped.reserve(css.size() + 32);
+    for (char c : css) {
+        if (c == '\\') escaped += "\\\\";
+        else if (c == '`') escaped += "\\`";
+        else if (c == '$') escaped += "\\$";
+        else escaped.push_back(c);
+    }
+    return escaped;
 }
 
 } // namespace
@@ -125,21 +137,46 @@ iframe[src*="googlesyndication.com"],
 )";
 }
 
+std::string_view Blocker::default_transparent_mica_css() {
+    return R"(
+:root, html, body {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+main, article, section, header, nav, footer, aside, [role="main"] {
+  background-color: rgba(128, 128, 140, 0.08) !important;
+}
+@media (prefers-color-scheme: dark) {
+  body {
+    color-scheme: dark;
+  }
+  main, article, section, header, nav, footer, aside, [role="main"] {
+    background-color: rgba(18, 18, 24, 0.34) !important;
+  }
+}
+@media (prefers-color-scheme: light) {
+  main, article, section, header, nav, footer, aside, [role="main"] {
+    background-color: rgba(255, 255, 255, 0.42) !important;
+  }
+}
+)";
+}
+
 std::string_view Blocker::default_zapper_script() {
     return R"JS((() => {
-  if (typeof window.__sncZapperCleanup === 'function') {
-    window.__sncZapperCleanup();
+  if (typeof window.__xncZapperCleanup === 'function') {
+    window.__xncZapperCleanup();
     return 'off';
   }
   const overlay = document.createElement('div');
-  overlay.id = '__snc-zapper-overlay';
+  overlay.id = '__xnc-zapper-overlay';
   Object.assign(overlay.style, {
     position: 'fixed', pointerEvents: 'none', border: '2px solid #ef4444',
     background: 'rgba(239, 68, 68, 0.14)', borderRadius: '4px',
     zIndex: '2147483646', display: 'none', boxSizing: 'border-box', transition: 'all 40ms ease-out'
   });
   const hud = document.createElement('div');
-  hud.id = '__snc-zapper-hud';
+  hud.id = '__xnc-zapper-hud';
   Object.assign(hud.style, {
     position: 'fixed', bottom: '14px', left: '50%', transform: 'translateX(-50%)',
     padding: '7px 14px', borderRadius: '999px', background: 'rgba(20, 20, 24, 0.88)',
@@ -147,7 +184,7 @@ std::string_view Blocker::default_zapper_script() {
     boxShadow: '0 8px 28px rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.16)',
     zIndex: '2147483647', pointerEvents: 'none', whiteSpace: 'nowrap'
   });
-  hud.textContent = 'Zapper · Click: Zap | Shift+Click: Hide Always | U: Undo | Esc: Done';
+  hud.textContent = 'XNC Zapper · Click: Zap | Shift+Click: Hide Always | U: Undo | Esc: Done';
   document.documentElement.appendChild(overlay);
   document.documentElement.appendChild(hud);
   let currentTarget = null;
@@ -187,13 +224,13 @@ std::string_view Blocker::default_zapper_script() {
   function persistRule(host, selector) {
     if (!selector) return;
     const style = document.createElement('style');
-    style.setAttribute('data-snc-zapper', '1');
+    style.setAttribute('data-xnc-zapper', '1');
     style.textContent = selector + ' { display: none !important; }';
     (document.head || document.documentElement).appendChild(style);
     const payload = JSON.stringify({ type: 'zapper', host: host || '', selector });
     try {
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sncZapper) {
-        window.webkit.messageHandlers.sncZapper.postMessage(payload);
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.xncZapper) {
+        window.webkit.messageHandlers.xncZapper.postMessage(payload);
       } else if (window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage(payload);
       }
@@ -246,9 +283,9 @@ std::string_view Blocker::default_zapper_script() {
     document.removeEventListener('keydown', onKey, true);
     overlay.remove();
     hud.remove();
-    delete window.__sncZapperCleanup;
+    delete window.__xncZapperCleanup;
   }
-  window.__sncZapperCleanup = cleanup;
+  window.__xncZapperCleanup = cleanup;
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKey, true);
@@ -273,18 +310,20 @@ std::string Blocker::build_css_for_host(
 }
 
 std::string Blocker::build_inject_css_script(std::string_view css) {
-    std::string escaped;
-    escaped.reserve(css.size() + 32);
-    for (char c : css) {
-        if (c == '\\') escaped += "\\\\";
-        else if (c == '`') escaped += "\\`";
-        else if (c == '$') escaped += "\\$";
-        else escaped.push_back(c);
-    }
-    return "(() => { let s = document.getElementById('__snc-cosmetic'); "
-           "if (!s) { s = document.createElement('style'); s.id = '__snc-cosmetic'; "
+    return "(() => { let s = document.getElementById('__xnc-cosmetic'); "
+           "if (!s) { s = document.createElement('style'); s.id = '__xnc-cosmetic'; "
            "(document.head || document.documentElement).appendChild(s); } "
-           "s.textContent = `" + escaped + "`; })();";
+           "s.textContent = `" + escape_backticks(css) + "`; })();";
 }
 
-} // namespace snc
+std::string Blocker::build_transparent_mica_script(bool enabled) {
+    if (!enabled) {
+        return "(() => { const s = document.getElementById('__xnc-transparent-mica'); if (s) s.remove(); })();";
+    }
+    return "(() => { let s = document.getElementById('__xnc-transparent-mica'); "
+           "if (!s) { s = document.createElement('style'); s.id = '__xnc-transparent-mica'; "
+           "(document.head || document.documentElement).appendChild(s); } "
+           "s.textContent = `" + escape_backticks(default_transparent_mica_css()) + "`; })();";
+}
+
+} // namespace xnc

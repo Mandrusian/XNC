@@ -8,19 +8,19 @@ REPO_ROOT="$(cd "$MACOS_DIR/.." && pwd)"
 cd "$MACOS_DIR"
 swift build -c release
 
-BIN_PATH="$(swift build -c release --show-bin-path)/SNC"
+BIN_PATH="$(swift build -c release --show-bin-path)/XNC"
 if [[ ! -f "$BIN_PATH" ]]; then
   echo "Release binary not found at $BIN_PATH" >&2
   exit 1
 fi
 
-APP_DIR="$MACOS_DIR/dist/SNC.app"
+APP_DIR="$MACOS_DIR/dist/XNC.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/SNC"
-chmod +x "$APP_DIR/Contents/MacOS/SNC"
-strip -x "$APP_DIR/Contents/MacOS/SNC" || true
+cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/XNC"
+chmod +x "$APP_DIR/Contents/MacOS/XNC"
+strip -x "$APP_DIR/Contents/MacOS/XNC" || true
 
 if [[ -f "$REPO_ROOT/shared/blocklist.json" ]]; then
   cp "$REPO_ROOT/shared/blocklist.json" "$APP_DIR/Contents/Resources/blocklist.json"
@@ -40,21 +40,21 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>SNC</string>
+  <string>XNC</string>
   <key>CFBundleIdentifier</key>
-  <string>com.mandrusian.snc</string>
+  <string>com.mandrusian.xnc</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>SNC</string>
+  <string>XNC</string>
   <key>CFBundleDisplayName</key>
-  <string>SNC</string>
+  <string>XNC</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.2.0</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>NSHighResolutionCapable</key>
@@ -69,5 +69,5 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 PLIST
 
 echo "Packaged: $APP_DIR"
-ls -lh "$APP_DIR/Contents/MacOS/SNC"
+ls -lh "$APP_DIR/Contents/MacOS/XNC"
 du -sh "$APP_DIR"

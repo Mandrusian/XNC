@@ -2,24 +2,24 @@
 import PackageDescription
 
 let package = Package(
-    name: "SNC",
+    name: "XNC",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .library(name: "SNCCore", targets: ["SNCCore"]),
-        .executable(name: "SNC", targets: ["SNC"])
+        .library(name: "XNCCore", targets: ["XNCCore"]),
+        .executable(name: "XNC", targets: ["XNC"])
     ],
     targets: [
         .target(
-            name: "SNCCore",
-            path: "Sources/SNCCore",
+            name: "XNCCore",
+            path: "Sources/XNCCore",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
-            name: "SNC",
-            dependencies: ["SNCCore"],
-            path: "Sources/SNC",
+            name: "XNC",
+            dependencies: ["XNCCore"],
+            path: "Sources/XNC",
             swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -27,9 +27,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "SNCCoreTests",
-            dependencies: ["SNCCore"],
-            path: "Tests/SNCCoreTests",
+            name: "XNCCoreTests",
+            dependencies: ["XNCCore"],
+            path: "Tests/XNCCoreTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]

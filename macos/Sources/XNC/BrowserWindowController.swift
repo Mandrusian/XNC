@@ -1,8 +1,13 @@
 import AppKit
-import SNCCore
+import XNCCore
 import WebKit
 
-final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, TabViewControllerDelegate {
+private extension NSToolbarItem.Identifier {
+    static let tabStrip = NSToolbarItem.Identifier("com.mandrusian.xnc.tabStrip")
+    static let newTab = NSToolbarItem.Identifier("com.mandrusian.xnc.newTab")
+}
+
+final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate, NSToolbarDelegate, TabViewControllerDelegate {
     private unowned let appDelegate: AppDelegate
     private var tabs: [TabViewController] = []
     private var selectedIndex: Int = 0
@@ -10,11 +15,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let chromeEffectView = NSVisualEffectView()
     private let tabBarStack = NSStackView()
     private let tabBarScroll = NSScrollView()
+    private var tabStripWidthConstraint: NSLayoutConstraint?
+
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let reloadButton = NSButton()
     private let shieldButton = NSButton()
     private let zapperButton = NSButton()
+    private let micaButton = NSButton()
     private let addressPill = NSView()
     private let addressField = NSTextField()
     private let bookmarkButton = NSButton()
@@ -32,18 +40,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             backing: .buffered,
             defer: false
         )
-        window.title = "SNC"
+        window.title = "XNC"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.isMovableByWindowBackground = true
+        window.toolbarStyle = .unifiedCompact
+        window.isMovableByWindowBackground = false
         window.backgroundColor = .clear
-        window.minSize = NSSize(width: 640, height: 440)
+        window.minSize = NSSize(width: 680, height: 440)
         window.center()
         super.init(window: window)
         window.delegate = self
 
+        let toolbar = NSToolbar(identifier: "XNCTitlebarToolbar")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        toolbar.showsBaselineSeparator = false
+        window.toolbar = toolbar
+
         buildLayout()
-        addTab(url: URLResolver.defaultHomeURL, isPrivate: false)
+        syncSearchPlaceholder()
+        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: false)
     }
 
     @available(*, unavailable)
@@ -53,6 +69,84 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func windowWillClose(_ notification: Notification) {
         appDelegate.windowDidClose(self)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        updateTabStripWidth()
+    }
+
+    // MARK: - NSToolbarDelegate (Puts clickable tabs inside the AppKit titlebar!)
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.tabStrip, .flexibleSpace, .newTab]
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.tabStrip, .flexibleSpace, .newTab]
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar,
+        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        if itemIdentifier == .tabStrip {
+            tabBarStack.orientation = .horizontal
+            tabBarStack.spacing = 4
+            tabBarStack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+            tabBarStack.translatesAutoresizingMaskIntoConstraints = false
+
+            let docView = NSView()
+            docView.translatesAutoresizingMaskIntoConstraints = false
+            docView.addSubview(tabBarStack)
+            NSLayoutConstraint.activate([
+                tabBarStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor),
+                tabBarStack.trailingAnchor.constraint(equalTo: docView.trailingAnchor),
+                tabBarStack.topAnchor.constraint(equalTo: docView.topAnchor),
+                tabBarStack.bottomAnchor.constraint(equalTo: docView.bottomAnchor)
+            ])
+
+            tabBarScroll.documentView = docView
+            tabBarScroll.hasHorizontalScroller = false
+            tabBarScroll.hasVerticalScroller = false
+            tabBarScroll.drawsBackground = false
+            tabBarScroll.translatesAutoresizingMaskIntoConstraints = false
+
+            NSLayoutConstraint.activate([
+                docView.topAnchor.constraint(equalTo: tabBarScroll.contentView.topAnchor),
+                docView.bottomAnchor.constraint(equalTo: tabBarScroll.contentView.bottomAnchor),
+                docView.leadingAnchor.constraint(greaterThanOrEqualTo: tabBarScroll.contentView.leadingAnchor)
+            ])
+
+            tabStripWidthConstraint?.isActive = false
+            let height = tabBarScroll.heightAnchor.constraint(equalToConstant: 28)
+            height.priority = .required
+            height.isActive = true
+
+            let width = tabBarScroll.widthAnchor.constraint(equalToConstant: 820)
+            width.priority = .defaultHigh
+            width.isActive = true
+            tabStripWidthConstraint = width
+            updateTabStripWidth()
+
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = tabBarScroll
+            return item
+        }
+
+        if itemIdentifier == .newTab {
+            let btn = makeToolbarButton(symbol: "plus", fallback: "+", tooltip: "New Tab (⌘T)", action: #selector(handleNewTab))
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.view = btn
+            item.label = "New Tab"
+            return item
+        }
+        return nil
+    }
+
+    private func updateTabStripWidth() {
+        guard let win = window else { return }
+        tabStripWidthConstraint?.constant = max(200, win.frame.width - 220)
     }
 
     // MARK: - Public Tab & Toolbar API
@@ -150,10 +244,57 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         syncToolbar()
     }
 
+    func applyTransparentMica(_ enabled: Bool) {
+        for tab in tabs {
+            tab.applyTransparentMica(enabled)
+        }
+        syncToolbar()
+    }
+
+    func syncSearchPlaceholder() {
+        let searx = appDelegate.store.searchEngineURL
+        if searx.isEmpty {
+            addressField.placeholderString = "Search DuckDuckGo or enter URL"
+        } else {
+            let host = URLResolver.displayHost(for: URLResolver.homeURL(searchBaseURL: searx))
+            addressField.placeholderString = "Search SearXNG (\(host)) or enter URL"
+        }
+    }
+
+    func configureSearchEngine() {
+        let alert = NSAlert()
+        alert.messageText = "Custom SearXNG Search Engine"
+        alert.informativeText = "Enter your SearXNG base URL (e.g. https://searx.example.com or http://localhost:8080) or leave blank for DuckDuckGo:"
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Use Local :8080")
+        alert.addButton(withTitle: "Reset to DuckDuckGo")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        input.placeholderString = "https://searx.example.com"
+        input.stringValue = appDelegate.store.searchEngineURL
+        alert.accessoryView = input
+
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            appDelegate.store.setSearchEngineURL(input.stringValue)
+        case .alertSecondButtonReturn:
+            appDelegate.store.setSearchEngineURL("http://localhost:8080")
+        case .alertThirdButtonReturn:
+            appDelegate.store.setSearchEngineURL("")
+        default:
+            return
+        }
+
+        appDelegate.refreshSearchEngineUI()
+        currentTab?.load(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL))
+    }
+
     func showJSConsole() {
         guard let tab = currentTab else { return }
         let alert = NSAlert()
-        alert.messageText = "SNC JavaScript Console"
+        alert.messageText = "XNC JavaScript Console"
         alert.informativeText = "Evaluate JavaScript in the active tab:"
         alert.addButton(withTitle: "Run")
         alert.addButton(withTitle: "Close")
@@ -283,72 +424,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         NSLayoutConstraint.activate([
             rootStack.leadingAnchor.constraint(equalTo: chromeEffectView.leadingAnchor),
             rootStack.trailingAnchor.constraint(equalTo: chromeEffectView.trailingAnchor),
-            rootStack.topAnchor.constraint(equalTo: chromeEffectView.topAnchor),
+            rootStack.topAnchor.constraint(equalTo: chromeEffectView.safeAreaLayoutGuide.topAnchor),
             rootStack.bottomAnchor.constraint(equalTo: chromeEffectView.bottomAnchor)
         ])
 
-        // Full-bleed Titlebar + Tab Strip (74pt leading inset for macOS traffic lights)
-        let tabBarContainer = NSView()
-        tabBarContainer.translatesAutoresizingMaskIntoConstraints = false
-        tabBarContainer.heightAnchor.constraint(equalToConstant: 38).isActive = true
-
-        tabBarStack.orientation = .horizontal
-        tabBarStack.spacing = 4
-        tabBarStack.edgeInsets = NSEdgeInsets(top: 7, left: 74, bottom: 4, right: 6)
-        tabBarStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let docView = NSView()
-        docView.translatesAutoresizingMaskIntoConstraints = false
-        docView.addSubview(tabBarStack)
-        NSLayoutConstraint.activate([
-            tabBarStack.leadingAnchor.constraint(equalTo: docView.leadingAnchor),
-            tabBarStack.trailingAnchor.constraint(lessThanOrEqualTo: docView.trailingAnchor),
-            tabBarStack.topAnchor.constraint(equalTo: docView.topAnchor),
-            tabBarStack.bottomAnchor.constraint(equalTo: docView.bottomAnchor),
-            docView.heightAnchor.constraint(equalToConstant: 38)
-        ])
-
-        tabBarScroll.documentView = docView
-        tabBarScroll.hasHorizontalScroller = false
-        tabBarScroll.hasVerticalScroller = false
-        tabBarScroll.drawsBackground = false
-        tabBarScroll.translatesAutoresizingMaskIntoConstraints = false
-
-        let newTabBtn = makeToolbarButton(symbol: "plus", fallback: "+", tooltip: "New Tab (⌘T)", action: #selector(handleNewTab))
-
-        let tabRow = NSStackView(views: [tabBarScroll, newTabBtn])
-        tabRow.orientation = .horizontal
-        tabRow.spacing = 6
-        tabRow.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
-        tabRow.translatesAutoresizingMaskIntoConstraints = false
-        tabBarContainer.addSubview(tabRow)
-        NSLayoutConstraint.activate([
-            tabRow.leadingAnchor.constraint(equalTo: tabBarContainer.leadingAnchor),
-            tabRow.trailingAnchor.constraint(equalTo: tabBarContainer.trailingAnchor),
-            tabRow.topAnchor.constraint(equalTo: tabBarContainer.topAnchor),
-            tabRow.bottomAnchor.constraint(equalTo: tabBarContainer.bottomAnchor)
-        ])
-
-        // Translucent Toolbar
         configureButton(backButton, symbol: "chevron.left", fallback: "◀", tooltip: "Back (⌘[)", action: #selector(handleBack))
         configureButton(forwardButton, symbol: "chevron.right", fallback: "▶", tooltip: "Forward (⌘])", action: #selector(handleForward))
         configureButton(reloadButton, symbol: "arrow.clockwise", fallback: "↻", tooltip: "Reload (⌘R)", action: #selector(handleReload))
         configureButton(shieldButton, symbol: "shield.fill", fallback: "uB", tooltip: "uBlock Shield", action: #selector(handleShieldMenu(_:)))
         configureButton(zapperButton, symbol: "bolt.fill", fallback: "Zap", tooltip: "Element Zapper (⌘⇧Z)", action: #selector(handleZapper))
+        configureButton(micaButton, symbol: "sparkles", fallback: "Mica", tooltip: "Transparent Mica Websites (⌘⇧M)", action: #selector(handleToggleMica))
         configureButton(bookmarkButton, symbol: "star", fallback: "☆", tooltip: "Bookmark Page (⌘D)", action: #selector(handleBookmark))
         configureButton(privateTabButton, symbol: "eye.slash", fallback: "Priv", tooltip: "New Private Tab (⌘⇧N)", action: #selector(handleNewPrivateTab))
         configureButton(devButton, symbol: "wrench.and.screwdriver", fallback: "Dev", tooltip: "Developer Options", action: #selector(handleDevMenu(_:)))
-        configureButton(menuButton, symbol: "line.3.horizontal", fallback: "☰", tooltip: "Bookmarks & History", action: #selector(handleShowMenu(_:)))
+        configureButton(menuButton, symbol: "line.3.horizontal", fallback: "☰", tooltip: "SearXNG, Bookmarks & History", action: #selector(handleShowMenu(_:)))
 
         addressPill.wantsLayer = true
         addressPill.layer?.cornerRadius = 8
-        addressPill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.06).cgColor
+        addressPill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.07).cgColor
         addressPill.layer?.borderWidth = 0.5
         addressPill.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
         addressPill.translatesAutoresizingMaskIntoConstraints = false
         addressPill.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-        addressField.placeholderString = "Search DuckDuckGo or enter URL"
         addressField.isBordered = false
         addressField.drawsBackground = false
         addressField.focusRingType = .none
@@ -366,7 +464,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         addressPill.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let toolbar = NSStackView(views: [
-            backButton, forwardButton, reloadButton, shieldButton, zapperButton,
+            backButton, forwardButton, reloadButton, shieldButton, zapperButton, micaButton,
             addressPill,
             bookmarkButton, privateTabButton, devButton, menuButton
         ])
@@ -390,13 +488,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        rootStack.addArrangedSubview(tabBarContainer)
         rootStack.addArrangedSubview(toolbar)
         rootStack.addArrangedSubview(progressBar)
         rootStack.addArrangedSubview(separator)
         rootStack.addArrangedSubview(contentContainer)
 
-        tabBarContainer.widthAnchor.constraint(equalTo: rootStack.widthAnchor).isActive = true
         toolbar.widthAnchor.constraint(equalTo: rootStack.widthAnchor).isActive = true
         progressBar.widthAnchor.constraint(equalTo: rootStack.widthAnchor).isActive = true
         separator.widthAnchor.constraint(equalTo: rootStack.widthAnchor).isActive = true
@@ -444,9 +540,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             pill.layer?.cornerRadius = 7
             pill.edgeInsets = NSEdgeInsets(top: 3, left: 9, bottom: 3, right: 6)
             if isSelected {
-                pill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
+                pill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.13).cgColor
             } else {
-                pill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.03).cgColor
+                pill.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.04).cgColor
             }
 
             let prefix = tab.isPrivate ? "Private · " : ""
@@ -472,7 +568,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func syncToolbar() {
         guard let tab = currentTab else { return }
         let st = tab.state
-        window?.title = st.isPrivate ? "SNC (Private) — \(st.title)" : "SNC — \(st.title)"
+        window?.title = st.isPrivate ? "XNC (Private) — \(st.title)" : "XNC — \(st.title)"
 
         backButton.isEnabled = st.canGoBack
         forwardButton.isEnabled = st.canGoForward
@@ -505,6 +601,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             ? NSColor.systemRed.withAlphaComponent(0.14).cgColor
             : NSColor.clear.cgColor
 
+        let micaOn = appDelegate.store.transparentWebsites
+        micaButton.contentTintColor = micaOn ? .controlAccentColor : .labelColor
+        micaButton.layer?.backgroundColor = micaOn
+            ? NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
+            : NSColor.clear.cgColor
+
         let isStarred = appDelegate.store.isBookmarked(url: st.urlString)
         if let starImg = NSImage(systemSymbolName: isStarred ? "star.fill" : "star", accessibilityDescription: "Bookmark") {
             bookmarkButton.image = starImg
@@ -521,12 +623,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - Actions
 
-    @objc private func handleNewTab() { addTab(url: URLResolver.defaultHomeURL, isPrivate: false) }
-    @objc private func handleNewPrivateTab() { addTab(url: URLResolver.defaultHomeURL, isPrivate: true) }
+    @objc private func handleNewTab() {
+        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: false)
+    }
+    @objc private func handleNewPrivateTab() {
+        addTab(url: URLResolver.homeURL(searchBaseURL: appDelegate.store.searchEngineURL), isPrivate: true)
+    }
     @objc private func handleBack() { goBack() }
     @objc private func handleForward() { goForward() }
     @objc private func handleReload() { reloadOrStopCurrentTab() }
     @objc private func handleZapper() { toggleZapper() }
+    @objc private func handleToggleMica() { appDelegate.toggleTransparentMicaAction(nil) }
     @objc private func handleBookmark() { toggleBookmark() }
     @objc private func handleSelectTab(_ sender: NSButton) { selectTab(at: sender.tag) }
     @objc private func handleCloseTab(_ sender: NSButton) { closeTab(at: sender.tag) }
@@ -581,7 +688,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     @objc private func handleToggleSiteAllowlist() {
         appDelegate.toggleCurrentHostAllowlistAction(nil)
-        currentTab?.injectCosmeticRules()
+        currentTab?.injectCosmeticAndMica()
         syncToolbar()
     }
 
@@ -618,6 +725,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let zap = NSMenuItem(title: "Element Zapper (⌘⇧Z)", action: #selector(handleZapper), keyEquivalent: "")
         zap.target = self
         menu.addItem(zap)
+
+        let micaTitle = appDelegate.store.transparentWebsites
+            ? "Disable Transparent Mica Websites (⌘⇧M)"
+            : "Enable Transparent Mica Websites (⌘⇧M)"
+        let mica = NSMenuItem(title: micaTitle, action: #selector(handleToggleMica), keyEquivalent: "")
+        mica.target = self
+        menu.addItem(mica)
 
         let jsLabel = (currentTab?.jsEnabled ?? true) ? "Disable JavaScript on Tab" : "Enable JavaScript on Tab"
         let jsItem = NSMenuItem(title: jsLabel, action: #selector(handleToggleJS), keyEquivalent: "")
@@ -659,6 +773,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     @objc private func handleShowMenu(_ sender: NSButton) {
         let menu = NSMenu()
         let store = appDelegate.store
+
+        let searxLabel = store.searchEngineURL.isEmpty
+            ? "Search Engine: DuckDuckGo (Set SearXNG…)"
+            : "Search Engine: \(store.searchEngineURL)…"
+        let searxItem = NSMenuItem(title: searxLabel, action: #selector(handleConfigureSearch), keyEquivalent: "")
+        searxItem.target = self
+        menu.addItem(searxItem)
+
+        let micaItem = NSMenuItem(
+            title: store.transparentWebsites ? "Transparent Mica Websites: ON (⌘⇧M)" : "Transparent Mica Websites: OFF (⌘⇧M)",
+            action: #selector(handleToggleMica),
+            keyEquivalent: ""
+        )
+        micaItem.target = self
+        menu.addItem(micaItem)
+        menu.addItem(.separator())
 
         let bookmarksHeader = NSMenuItem(title: "Bookmarks (\(store.bookmarks.count))", action: nil, keyEquivalent: "")
         bookmarksHeader.isEnabled = false
@@ -702,6 +832,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
 
+    @objc private func handleConfigureSearch() { configureSearchEngine() }
+
     @objc private func handleOpenMenuURL(_ sender: NSMenuItem) {
         guard let urlStr = sender.representedObject as? String, let url = URL(string: urlStr) else { return }
         currentTab?.load(url: url)
@@ -715,7 +847,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            let url = URLResolver.resolve(addressField.stringValue)
+            let url = URLResolver.resolve(addressField.stringValue, searchBaseURL: appDelegate.store.searchEngineURL)
             currentTab?.load(url: url)
             window?.makeFirstResponder(currentTab?.webView)
             return true
@@ -741,6 +873,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     func tab(_ tab: TabViewController, didAddZapperRuleFor host: String) {
-        tab.injectCosmeticRules()
+        tab.injectCosmeticAndMica()
     }
 }

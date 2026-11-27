@@ -1,4 +1,5 @@
-#include "snc/storage.hpp"
+#include "xnc/storage.hpp"
+#include "xnc/url_resolver.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -7,7 +8,7 @@
 #include <fstream>
 #include <sstream>
 
-namespace snc {
+namespace xnc {
 
 namespace {
 
@@ -80,25 +81,25 @@ BrowserStore::BrowserStore(std::filesystem::path data_dir)
 std::filesystem::path BrowserStore::default_data_dir() {
 #ifdef _WIN32
     if (const char* appdata = std::getenv("APPDATA"); appdata && *appdata) {
-        return std::filesystem::path(appdata) / "SNC";
+        return std::filesystem::path(appdata) / "XNC";
     }
     if (const char* home = std::getenv("USERPROFILE"); home && *home) {
-        return std::filesystem::path(home) / "AppData" / "Roaming" / "SNC";
+        return std::filesystem::path(home) / "AppData" / "Roaming" / "XNC";
     }
-    return std::filesystem::path("snc_data");
+    return std::filesystem::path("xnc_data");
 #elif defined(__APPLE__)
     if (const char* home = std::getenv("HOME"); home && *home) {
-        return std::filesystem::path(home) / "Library" / "Application Support" / "SNC";
+        return std::filesystem::path(home) / "Library" / "Application Support" / "XNC";
     }
-    return std::filesystem::path("snc_data");
+    return std::filesystem::path("xnc_data");
 #else
     if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg) {
-        return std::filesystem::path(xdg) / "snc";
+        return std::filesystem::path(xdg) / "xnc";
     }
     if (const char* home = std::getenv("HOME"); home && *home) {
-        return std::filesystem::path(home) / ".local" / "share" / "snc";
+        return std::filesystem::path(home) / ".local" / "share" / "xnc";
     }
-    return std::filesystem::path("snc_data");
+    return std::filesystem::path("xnc_data");
 #endif
 }
 
@@ -107,6 +108,8 @@ bool BrowserStore::load() {
     history_.clear();
     allowlisted_hosts_.clear();
     custom_selectors_.clear();
+    search_engine_url_.clear();
+    transparent_websites_ = false;
 
     std::filesystem::path file = data_dir_ / "store.tsv";
     std::ifstream in(file);
@@ -131,6 +134,10 @@ bool BrowserStore::load() {
             if (!host.empty() && !cols[2].empty()) {
                 custom_selectors_[host].push_back(cols[2]);
             }
+        } else if (cols[0] == "S" && cols.size() >= 2) {
+            search_engine_url_ = normalize_searxng_base(cols[1]);
+        } else if (cols[0] == "M" && cols.size() >= 2) {
+            transparent_websites_ = (cols[1] == "1");
         }
     }
     return true;
@@ -145,6 +152,12 @@ bool BrowserStore::save() const {
     std::ofstream out(file, std::ios::trunc);
     if (!out.is_open()) return false;
 
+    if (!search_engine_url_.empty()) {
+        out << "S\t" << escape_field(search_engine_url_) << "\n";
+    }
+    if (transparent_websites_) {
+        out << "M\t1\n";
+    }
     for (const auto& b : bookmarks_) {
         out << "B\t" << escape_field(b.title) << "\t" << escape_field(b.url) << "\n";
     }
@@ -160,6 +173,16 @@ bool BrowserStore::save() const {
         }
     }
     return out.good();
+}
+
+void BrowserStore::set_search_engine_url(std::string url) {
+    search_engine_url_ = normalize_searxng_base(url);
+    save();
+}
+
+void BrowserStore::set_transparent_websites(bool enabled) {
+    transparent_websites_ = enabled;
+    save();
 }
 
 bool BrowserStore::is_bookmarked(std::string_view url) const {
@@ -270,4 +293,4 @@ void BrowserStore::clear_custom_selectors(std::string_view host) {
     }
 }
 
-} // namespace snc
+} // namespace xnc

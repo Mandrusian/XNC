@@ -1,6 +1,6 @@
-#include "snc/blocker.hpp"
-#include "snc/storage.hpp"
-#include "snc/url_resolver.hpp"
+#include "xnc/blocker.hpp"
+#include "xnc/storage.hpp"
+#include "xnc/url_resolver.hpp"
 
 #include <gtk/gtk.h>
 #include <webkit2/webkit2.h>
@@ -15,7 +15,7 @@
 
 namespace {
 
-constexpr const char* kFilterId = "snc-tracker-blocker";
+constexpr const char* kFilterId = "xnc-tracker-blocker";
 
 struct BrowserApp;
 
@@ -80,13 +80,14 @@ struct BrowserApp {
     GtkWidget* reload_btn = nullptr;
     GtkWidget* shield_btn = nullptr;
     GtkWidget* zapper_btn = nullptr;
+    GtkWidget* mica_btn = nullptr;
     GtkWidget* address_entry = nullptr;
     GtkWidget* bookmark_btn = nullptr;
     GtkWidget* dev_btn = nullptr;
     GtkWidget* menu_btn = nullptr;
     GtkWidget* progress_bar = nullptr;
 
-    snc::BrowserStore store;
+    xnc::BrowserStore store;
     WebKitUserContentFilterStore* filter_store = nullptr;
     WebKitUserContentFilter* compiled_filter = nullptr;
     bool blocker_enabled = true;
@@ -98,7 +99,7 @@ struct BrowserApp {
         if (page < 0) return nullptr;
         GtkWidget* widget = gtk_notebook_get_nth_page(GTK_NOTEBOOK(notebook), page);
         if (!widget) return nullptr;
-        auto* ref = static_cast<WeakTabRef*>(g_object_get_data(G_OBJECT(widget), "snc-tab"));
+        auto* ref = static_cast<WeakTabRef*>(g_object_get_data(G_OBJECT(widget), "xnc-tab"));
         if (!ref) return nullptr;
         auto tab = ref->weak.lock();
         return (tab && !tab->closed) ? tab.get() : nullptr;
@@ -137,7 +138,7 @@ std::string extract_json_string_field(const std::string& json, const std::string
 }
 
 std::string build_fallback_blocklist_json() {
-    snc::Blocker blocker;
+    xnc::Blocker blocker;
     std::ostringstream out;
     out << "[\n";
     const auto& domains = blocker.domains();
@@ -172,14 +173,19 @@ std::string load_text_asset(const std::string& filename, const std::string& fall
     return fallback;
 }
 
-void inject_cosmetic_rules(BrowserApp* app, Tab* tab) {
+void inject_cosmetic_and_mica(BrowserApp* app, Tab* tab) {
     if (!tab || tab->closed || !tab->webview) return;
-    std::string host = snc::extract_host(tab->url);
+    std::string host = xnc::extract_host(tab->url);
     bool shield_active = app->blocker_enabled && !app->store.is_host_allowlisted(host);
-    std::string cosmetic_css = load_text_asset("cosmetic_rules.css", std::string(snc::Blocker::default_cosmetic_css()));
-    std::string combined = snc::Blocker::build_css_for_host(
+    std::string cosmetic_css = load_text_asset("cosmetic_rules.css", std::string(xnc::Blocker::default_cosmetic_css()));
+    std::string combined = xnc::Blocker::build_css_for_host(
         shield_active, app->store.custom_selectors(host), cosmetic_css);
-    run_js(tab->webview, snc::Blocker::build_inject_css_script(combined));
+    run_js(tab->webview, xnc::Blocker::build_inject_css_script(combined));
+
+    bool mica = app->store.transparent_websites();
+    GdkRGBA bg = mica ? GdkRGBA{0.0, 0.0, 0.0, 0.0} : GdkRGBA{1.0, 1.0, 1.0, 1.0};
+    webkit_web_view_set_background_color(tab->webview, &bg);
+    run_js(tab->webview, xnc::Blocker::build_transparent_mica_script(mica));
 }
 
 void apply_filter_to_tab(BrowserApp* app, Tab* tab) {
@@ -187,12 +193,12 @@ void apply_filter_to_tab(BrowserApp* app, Tab* tab) {
     WebKitUserContentManager* ucm = webkit_web_view_get_user_content_manager(tab->webview);
     if (!ucm) return;
     webkit_user_content_manager_remove_filter_by_id(ucm, kFilterId);
-    std::string host = snc::extract_host(tab->url);
+    std::string host = xnc::extract_host(tab->url);
     bool shield_active = app->blocker_enabled && !app->store.is_host_allowlisted(host);
     if (shield_active && app->compiled_filter) {
         webkit_user_content_manager_add_filter(ucm, app->compiled_filter);
     }
-    inject_cosmetic_rules(app, tab);
+    inject_cosmetic_and_mica(app, tab);
 }
 
 void update_tab_label(Tab* tab) {
@@ -206,12 +212,23 @@ void update_tab_label(Tab* tab) {
     gtk_label_set_text(GTK_LABEL(tab->tab_label), label.c_str());
 }
 
+void sync_search_placeholder(BrowserApp* app) {
+    if (!app->address_entry) return;
+    if (app->store.search_engine_url().empty()) {
+        gtk_entry_set_placeholder_text(GTK_ENTRY(app->address_entry), "Search DuckDuckGo or enter URL");
+    } else {
+        std::string host = xnc::display_host(xnc::home_url_for_search_engine(app->store.search_engine_url()));
+        std::string text = "Search SearXNG (" + host + ") or enter URL";
+        gtk_entry_set_placeholder_text(GTK_ENTRY(app->address_entry), text.c_str());
+    }
+}
+
 void sync_toolbar(BrowserApp* app) {
     if (!app->window) return;
     Tab* tab = app->current_tab();
     if (!tab) return;
 
-    std::string win_title = tab->is_private ? ("SNC (Private) — " + tab->title) : ("SNC — " + tab->title);
+    std::string win_title = tab->is_private ? ("XNC (Private) — " + tab->title) : ("XNC — " + tab->title);
     gtk_window_set_title(GTK_WINDOW(app->window), win_title.c_str());
     if (app->header_bar) {
         gtk_header_bar_set_title(GTK_HEADER_BAR(app->header_bar), win_title.c_str());
@@ -230,10 +247,12 @@ void sync_toolbar(BrowserApp* app) {
         gtk_widget_hide(app->progress_bar);
     }
 
-    std::string host = snc::extract_host(tab->url);
+    std::string host = xnc::extract_host(tab->url);
     bool paused = !host.empty() && app->store.is_host_allowlisted(host);
     gtk_button_set_label(GTK_BUTTON(app->shield_btn),
                          !app->blocker_enabled ? "uB: OFF" : (paused ? "uB: Paused" : "uB: ON"));
+    gtk_button_set_label(GTK_BUTTON(app->mica_btn),
+                         app->store.transparent_websites() ? "Glass: ON" : "Glass");
 
     bool starred = !tab->url.empty() && app->store.is_bookmarked(tab->url);
     gtk_button_set_label(GTK_BUTTON(app->bookmark_btn), starred ? "★" : "☆");
@@ -241,6 +260,7 @@ void sync_toolbar(BrowserApp* app) {
     if (!gtk_widget_has_focus(app->address_entry)) {
         gtk_entry_set_text(GTK_ENTRY(app->address_entry), tab->url.c_str());
     }
+    sync_search_placeholder(app);
 }
 
 void add_tab(BrowserApp* app, const std::string& initial_url, bool is_private);
@@ -300,7 +320,7 @@ void on_load_changed(WebKitWebView*, WebKitLoadEvent event, gpointer user_data) 
     auto tab = lock_tab(user_data);
     if (!tab) return;
     if (event == WEBKIT_LOAD_COMMITTED || event == WEBKIT_LOAD_FINISHED) {
-        inject_cosmetic_rules(tab->app, tab.get());
+        inject_cosmetic_and_mica(tab->app, tab.get());
     }
     if (event == WEBKIT_LOAD_FINISHED) {
         const char* u = webkit_web_view_get_uri(tab->webview);
@@ -327,7 +347,7 @@ void on_zapper_message(WebKitUserContentManager*, WebKitJavascriptResult* js_res
     std::string selector = extract_json_string_field(json, "selector");
     if (!host.empty() && !selector.empty()) {
         tab->app->store.add_custom_selector(host, selector);
-        inject_cosmetic_rules(tab->app, tab.get());
+        inject_cosmetic_and_mica(tab->app, tab.get());
     }
 }
 
@@ -336,7 +356,8 @@ GtkWidget* on_create_web_view(WebKitWebView*, WebKitNavigationAction* action, gp
     if (!tab) return nullptr;
     WebKitURIRequest* req = webkit_navigation_action_get_request(action);
     const char* uri = req ? webkit_uri_request_get_uri(req) : nullptr;
-    add_tab(tab->app, uri ? uri : std::string(snc::kDefaultHomeUrl), tab->is_private);
+    std::string home = xnc::home_url_for_search_engine(tab->app->store.search_engine_url());
+    add_tab(tab->app, uri ? uri : home, tab->is_private);
     return nullptr;
 }
 
@@ -345,7 +366,8 @@ void add_tab(BrowserApp* app, const std::string& initial_url, bool is_private) {
     tab->app = app;
     tab->is_private = is_private;
     tab->title = is_private ? "Private Tab" : "New Tab";
-    tab->url = initial_url.empty() ? std::string(snc::kDefaultHomeUrl) : initial_url;
+    std::string home = xnc::home_url_for_search_engine(app->store.search_engine_url());
+    tab->url = initial_url.empty() ? home : initial_url;
 
     WebKitWebContext* ctx = is_private ? webkit_web_context_new_ephemeral() : webkit_web_context_get_default();
     GtkWidget* view_widget = webkit_web_view_new_with_context(ctx);
@@ -358,10 +380,10 @@ void add_tab(BrowserApp* app, const std::string& initial_url, bool is_private) {
     webkit_settings_set_enable_developer_extras(settings, TRUE);
 
     WebKitUserContentManager* ucm = webkit_web_view_get_user_content_manager(tab->webview);
-    webkit_user_content_manager_register_script_message_handler(ucm, "sncZapper");
+    webkit_user_content_manager_register_script_message_handler(ucm, "xncZapper");
 
     tab->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    g_object_set_data_full(G_OBJECT(tab->container), "snc-tab", new WeakTabRef{tab},
+    g_object_set_data_full(G_OBJECT(tab->container), "xnc-tab", new WeakTabRef{tab},
                            [](gpointer p) { delete static_cast<WeakTabRef*>(p); });
     gtk_box_pack_start(GTK_BOX(tab->container), view_widget, TRUE, TRUE, 0);
 
@@ -378,7 +400,7 @@ void add_tab(BrowserApp* app, const std::string& initial_url, bool is_private) {
     apply_filter_to_tab(app, raw_tab);
 
     connect_tab_signal(tab->close_btn, "clicked", on_close_tab_clicked, tab);
-    connect_tab_signal(ucm, "script-message-received::sncZapper", on_zapper_message, tab);
+    connect_tab_signal(ucm, "script-message-received::xncZapper", on_zapper_message, tab);
     connect_tab_signal(tab->webview, "notify::title", on_title_changed, tab);
     connect_tab_signal(tab->webview, "notify::uri", on_uri_changed, tab);
     connect_tab_signal(tab->webview, "notify::estimated-load-progress", on_progress_changed, tab);
@@ -412,6 +434,19 @@ void on_reload_clicked(GtkButton*, gpointer user_data) {
     }
 }
 
+void toggle_transparent_mica(BrowserApp* app) {
+    bool next = !app->store.transparent_websites();
+    app->store.set_transparent_websites(next);
+    for (auto& tab : app->tabs) {
+        inject_cosmetic_and_mica(app, tab.get());
+    }
+    sync_toolbar(app);
+}
+
+void on_mica_clicked(GtkButton*, gpointer user_data) {
+    toggle_transparent_mica(static_cast<BrowserApp*>(user_data));
+}
+
 void on_toggle_global_shield(GtkMenuItem*, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     app->blocker_enabled = !app->blocker_enabled;
@@ -424,7 +459,7 @@ void on_toggle_global_shield(GtkMenuItem*, gpointer user_data) {
 void on_toggle_site_allowlist(GtkMenuItem*, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     if (auto* tab = app->current_tab()) {
-        std::string host = snc::extract_host(tab->url);
+        std::string host = xnc::extract_host(tab->url);
         if (!host.empty()) {
             app->store.toggle_host_allowlist(host);
             apply_filter_to_tab(app, tab);
@@ -436,7 +471,7 @@ void on_toggle_site_allowlist(GtkMenuItem*, gpointer user_data) {
 void on_clear_zapped_site(GtkMenuItem*, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     if (auto* tab = app->current_tab()) {
-        std::string host = snc::extract_host(tab->url);
+        std::string host = xnc::extract_host(tab->url);
         if (!host.empty()) {
             app->store.clear_custom_selectors(host);
             webkit_web_view_reload(tab->webview);
@@ -446,7 +481,7 @@ void on_clear_zapped_site(GtkMenuItem*, gpointer user_data) {
 
 void trigger_zapper(BrowserApp* app) {
     if (auto* tab = app->current_tab()) {
-        std::string script = load_text_asset("zapper.js", std::string(snc::Blocker::default_zapper_script()));
+        std::string script = load_text_asset("zapper.js", std::string(xnc::Blocker::default_zapper_script()));
         run_js(tab->webview, script);
     }
 }
@@ -471,12 +506,59 @@ void toggle_js_on_tab(BrowserApp* app) {
     }
 }
 
+void open_searxng_dialog(BrowserApp* app) {
+    GtkWidget* dialog = gtk_dialog_new_with_buttons(
+        "Custom SearXNG Search Engine",
+        GTK_WINDOW(app->window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        "Cancel", GTK_RESPONSE_CANCEL,
+        "DuckDuckGo", 2,
+        "Local :8080", 3,
+        "Save", GTK_RESPONSE_ACCEPT,
+        nullptr);
+    GtkWidget* area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+    GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+
+    GtkWidget* lbl = gtk_label_new("Enter custom SearXNG URL (e.g. https://searx.example.com or http://localhost:8080):");
+    GtkWidget* entry = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(entry), app->store.search_engine_url().c_str());
+    gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "https://searx.example.com");
+
+    gtk_box_pack_start(GTK_BOX(box), lbl, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), entry, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(area), box);
+    gtk_widget_show_all(dialog);
+
+    g_object_add_weak_pointer(G_OBJECT(dialog), reinterpret_cast<gpointer*>(&dialog));
+    gint resp = gtk_dialog_run(GTK_DIALOG(dialog));
+    if (!dialog) return;
+
+    if (resp == GTK_RESPONSE_ACCEPT) {
+        app->store.set_search_engine_url(gtk_entry_get_text(GTK_ENTRY(entry)));
+    } else if (resp == 2) {
+        app->store.set_search_engine_url("");
+    } else if (resp == 3) {
+        app->store.set_search_engine_url("http://localhost:8080");
+    }
+    gtk_widget_destroy(dialog);
+
+    if (resp == GTK_RESPONSE_ACCEPT || resp == 2 || resp == 3) {
+        sync_search_placeholder(app);
+        if (auto* tab = app->current_tab()) {
+            std::string home = xnc::home_url_for_search_engine(app->store.search_engine_url());
+            tab->url = home;
+            webkit_web_view_load_uri(tab->webview, home.c_str());
+        }
+    }
+}
+
 void on_shield_btn_clicked(GtkButton* btn, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     GtkWidget* menu = create_managed_popup_menu();
 
     Tab* tab = app->current_tab();
-    std::string host = tab ? snc::extract_host(tab->url) : "";
+    std::string host = tab ? xnc::extract_host(tab->url) : "";
     bool paused = !host.empty() && app->store.is_host_allowlisted(host);
 
     if (!host.empty()) {
@@ -519,6 +601,11 @@ void on_dev_btn_clicked(GtkButton* btn, gpointer user_data) {
     g_signal_connect_swapped(zap, "activate", G_CALLBACK(trigger_zapper), app);
     gtk_menu_shell_append(GTK_MENU_SHELL(menu), zap);
 
+    GtkWidget* mica = gtk_menu_item_new_with_label(
+        app->store.transparent_websites() ? "Disable Transparent Mica Websites (Ctrl+Shift+M)" : "Enable Transparent Mica Websites (Ctrl+Shift+M)");
+    g_signal_connect_swapped(mica, "activate", G_CALLBACK(toggle_transparent_mica), app);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), mica);
+
     Tab* tab = app->current_tab();
     GtkWidget* js_item = gtk_menu_item_new_with_label(
         (tab && !tab->js_enabled) ? "Enable JavaScript on Tab" : "Disable JavaScript on Tab");
@@ -533,7 +620,7 @@ void on_address_activate(GtkEntry* entry, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     Tab* tab = app->current_tab();
     if (!tab) return;
-    std::string target = snc::resolve_input(gtk_entry_get_text(entry));
+    std::string target = xnc::resolve_input(gtk_entry_get_text(entry), app->store.search_engine_url());
     tab->url = target;
     webkit_web_view_load_uri(tab->webview, target.c_str());
     gtk_widget_grab_focus(GTK_WIDGET(tab->webview));
@@ -549,12 +636,12 @@ void on_bookmark_clicked(GtkButton*, gpointer user_data) {
 
 void on_new_tab_clicked(GtkButton*, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
-    add_tab(app, std::string(snc::kDefaultHomeUrl), false);
+    add_tab(app, xnc::home_url_for_search_engine(app->store.search_engine_url()), false);
 }
 
 void on_new_private_tab_clicked(GtkButton*, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
-    add_tab(app, std::string(snc::kDefaultHomeUrl), true);
+    add_tab(app, xnc::home_url_for_search_engine(app->store.search_engine_url()), true);
 }
 
 struct MenuTarget {
@@ -578,6 +665,19 @@ void on_clear_history_activate(GtkMenuItem*, gpointer user_data) {
 void on_menu_btn_clicked(GtkButton* btn, gpointer user_data) {
     auto* app = static_cast<BrowserApp*>(user_data);
     GtkWidget* menu = create_managed_popup_menu();
+
+    std::string searx_label = app->store.search_engine_url().empty()
+        ? "Search Engine: DuckDuckGo (Set SearXNG…)"
+        : ("Search Engine: " + app->store.search_engine_url() + "…");
+    GtkWidget* searx_item = gtk_menu_item_new_with_label(searx_label.c_str());
+    g_signal_connect_swapped(searx_item, "activate", G_CALLBACK(open_searxng_dialog), app);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), searx_item);
+
+    GtkWidget* mica_item = gtk_menu_item_new_with_label(
+        app->store.transparent_websites() ? "Transparent Mica Websites: ON (Ctrl+Shift+M)" : "Transparent Mica Websites: OFF (Ctrl+Shift+M)");
+    g_signal_connect_swapped(mica_item, "activate", G_CALLBACK(toggle_transparent_mica), app);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), mica_item);
+    gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 
     GtkWidget* b_hdr = gtk_menu_item_new_with_label("Bookmarks");
     gtk_widget_set_sensitive(b_hdr, FALSE);
@@ -636,7 +736,7 @@ gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer user_data) {
         return TRUE;
     }
     if (mods == GDK_CONTROL_MASK) {
-        if (key == GDK_KEY_t) { add_tab(app, std::string(snc::kDefaultHomeUrl), false); return TRUE; }
+        if (key == GDK_KEY_t) { add_tab(app, xnc::home_url_for_search_engine(app->store.search_engine_url()), false); return TRUE; }
         if (key == GDK_KEY_w) { close_tab(app, app->current_tab()); return TRUE; }
         if (key == GDK_KEY_l) {
             gtk_widget_grab_focus(app->address_entry);
@@ -646,9 +746,10 @@ gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer user_data) {
         if (key == GDK_KEY_r) { on_reload_clicked(nullptr, app); return TRUE; }
         if (key == GDK_KEY_d) { on_bookmark_clicked(nullptr, app); return TRUE; }
     } else if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
-        if (key == GDK_KEY_n) { add_tab(app, std::string(snc::kDefaultHomeUrl), true); return TRUE; }
+        if (key == GDK_KEY_n) { add_tab(app, xnc::home_url_for_search_engine(app->store.search_engine_url()), true); return TRUE; }
         if (key == GDK_KEY_b) { on_toggle_global_shield(nullptr, app); return TRUE; }
         if (key == GDK_KEY_z) { trigger_zapper(app); return TRUE; }
+        if (key == GDK_KEY_m) { toggle_transparent_mica(app); return TRUE; }
         if (key == GDK_KEY_i) { open_inspector(app); return TRUE; }
     } else if (mods == GDK_MOD1_MASK) {
         if (event->keyval == GDK_KEY_Left) { on_back_clicked(nullptr, app); return TRUE; }
@@ -696,31 +797,37 @@ void activate(GtkApplication* gtk_app, gpointer user_data) {
 
     GtkCssProvider* css = gtk_css_provider_new();
     gtk_css_provider_load_from_data(css,
+        "window#xnc-main { background-color: rgba(18, 20, 26, 0.72); }"
         "headerbar { min-height: 40px; padding: 2px 6px; }"
-        "entry#snc-address { border-radius: 8px; min-height: 28px; }"
-        "button.flat-tool { border-radius: 6px; padding: 2px 7px; }",
+        "entry#xnc-address { border-radius: 8px; min-height: 28px; }",
         -1, nullptr);
     gtk_style_context_add_provider_for_screen(
         gdk_screen_get_default(), GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(css);
 
     app->window = gtk_application_window_new(gtk_app);
+    gtk_widget_set_name(app->window, "xnc-main");
+    GdkScreen* screen = gtk_window_get_screen(GTK_WINDOW(app->window));
+    if (GdkVisual* visual = gdk_screen_get_rgba_visual(screen)) {
+        gtk_widget_set_visual(app->window, visual);
+        gtk_widget_set_app_paintable(app->window, TRUE);
+    }
     gtk_window_set_default_size(GTK_WINDOW(app->window), 1160, 760);
     g_signal_connect(app->window, "destroy", G_CALLBACK(on_window_destroy), app);
 
     app->header_bar = gtk_header_bar_new();
     gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(app->header_bar), TRUE);
-    gtk_header_bar_set_title(GTK_HEADER_BAR(app->header_bar), "SNC");
+    gtk_header_bar_set_title(GTK_HEADER_BAR(app->header_bar), "XNC");
 
     app->back_btn = gtk_button_new_with_label("◀");
     app->forward_btn = gtk_button_new_with_label("▶");
     app->reload_btn = gtk_button_new_with_label("↻");
     app->shield_btn = gtk_button_new_with_label("uB: ON");
     app->zapper_btn = gtk_button_new_with_label("⚡");
+    app->mica_btn = gtk_button_new_with_label("Glass");
     app->address_entry = gtk_entry_new();
-    gtk_widget_set_name(app->address_entry, "snc-address");
-    gtk_entry_set_width_chars(GTK_ENTRY(app->address_entry), 44);
-    gtk_entry_set_placeholder_text(GTK_ENTRY(app->address_entry), "Search DuckDuckGo or enter URL");
+    gtk_widget_set_name(app->address_entry, "xnc-address");
+    gtk_entry_set_width_chars(GTK_ENTRY(app->address_entry), 40);
     app->bookmark_btn = gtk_button_new_with_label("☆");
     GtkWidget* new_tab_btn = gtk_button_new_with_label("+");
     GtkWidget* private_btn = gtk_button_new_with_label("Priv");
@@ -732,6 +839,7 @@ void activate(GtkApplication* gtk_app, gpointer user_data) {
     gtk_header_bar_pack_start(GTK_HEADER_BAR(app->header_bar), app->reload_btn);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(app->header_bar), app->shield_btn);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(app->header_bar), app->zapper_btn);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(app->header_bar), app->mica_btn);
     gtk_header_bar_set_custom_title(GTK_HEADER_BAR(app->header_bar), app->address_entry);
     gtk_header_bar_pack_end(GTK_HEADER_BAR(app->header_bar), app->menu_btn);
     gtk_header_bar_pack_end(GTK_HEADER_BAR(app->header_bar), app->dev_btn);
@@ -757,6 +865,7 @@ void activate(GtkApplication* gtk_app, gpointer user_data) {
     g_signal_connect(app->reload_btn, "clicked", G_CALLBACK(on_reload_clicked), app);
     g_signal_connect(app->shield_btn, "clicked", G_CALLBACK(on_shield_btn_clicked), app);
     g_signal_connect(app->zapper_btn, "clicked", G_CALLBACK(on_zapper_clicked), app);
+    g_signal_connect(app->mica_btn, "clicked", G_CALLBACK(on_mica_clicked), app);
     g_signal_connect(app->address_entry, "activate", G_CALLBACK(on_address_activate), app);
     g_signal_connect(app->bookmark_btn, "clicked", G_CALLBACK(on_bookmark_clicked), app);
     g_signal_connect(new_tab_btn, "clicked", G_CALLBACK(on_new_tab_clicked), app);
@@ -778,7 +887,8 @@ void activate(GtkApplication* gtk_app, gpointer user_data) {
     webkit_user_content_filter_store_save(app->filter_store, kFilterId, bytes, nullptr, on_filter_saved, app);
     g_bytes_unref(bytes);
 
-    add_tab(app, std::string(snc::kDefaultHomeUrl), false);
+    sync_search_placeholder(app);
+    add_tab(app, xnc::home_url_for_search_engine(app->store.search_engine_url()), false);
     gtk_widget_show_all(app->window);
 }
 
@@ -787,9 +897,9 @@ void activate(GtkApplication* gtk_app, gpointer user_data) {
 int main(int argc, char** argv) {
     BrowserApp app;
 #if GLIB_CHECK_VERSION(2, 74, 0)
-    GtkApplication* gtk_app = gtk_application_new("com.mandrusian.snc", G_APPLICATION_DEFAULT_FLAGS);
+    GtkApplication* gtk_app = gtk_application_new("com.mandrusian.xnc", G_APPLICATION_DEFAULT_FLAGS);
 #else
-    GtkApplication* gtk_app = gtk_application_new("com.mandrusian.snc", G_APPLICATION_FLAGS_NONE);
+    GtkApplication* gtk_app = gtk_application_new("com.mandrusian.xnc", G_APPLICATION_FLAGS_NONE);
 #endif
     g_signal_connect(gtk_app, "activate", G_CALLBACK(activate), &app);
     int status = g_application_run(G_APPLICATION(gtk_app), argc, argv);

@@ -1,12 +1,51 @@
 import Foundation
 
-/// Resolves user address bar input into either a direct URL or a DuckDuckGo search URL.
+/// Resolves user address bar input into a direct URL, custom SearXNG search, or DuckDuckGo search.
 public enum URLResolver {
     public static let defaultHomeURL = URL(string: "https://duckduckgo.com/")!
 
-    public static func resolve(_ rawInput: String) -> URL {
+    public static func normalizeSearXNGURL(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let lower = trimmed.lowercased()
+        var normalized: String
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            normalized = trimmed
+        } else if let scheme = inferredSchemeIfHostURL(trimmed) {
+            normalized = scheme + trimmed
+        } else {
+            normalized = "https://" + trimmed
+        }
+
+        if normalized.contains("{query}") {
+            return normalized
+        }
+
+        while normalized.count > 8 && normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        if normalized.lowercased().hasSuffix("/search") && normalized.count > 7 {
+            normalized.removeLast(7)
+        }
+        return normalized
+    }
+
+    public static func homeURL(searchBaseURL: String = "") -> URL {
+        let norm = normalizeSearXNGURL(searchBaseURL)
+        guard !norm.isEmpty else { return defaultHomeURL }
+        if norm.contains("{query}"), let url = URL(string: norm), let scheme = url.scheme, let host = url.host {
+            let port = url.port.map { ":\($0)" } ?? ""
+            if let root = URL(string: "\(scheme)://\(host)\(port)/") {
+                return root
+            }
+        }
+        return URL(string: norm + "/") ?? defaultHomeURL
+    }
+
+    public static func resolve(_ rawInput: String, searchBaseURL: String = "") -> URL {
         let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return defaultHomeURL }
+        guard !trimmed.isEmpty else { return homeURL(searchBaseURL: searchBaseURL) }
 
         let lower = trimmed.lowercased()
         if lower.hasPrefix("http://") || lower.hasPrefix("https://") ||
@@ -16,9 +55,22 @@ public enum URLResolver {
             }
         }
 
-        if let scheme = inferredSchemeIfHostURL(trimmed) {
-            if let url = URL(string: scheme + trimmed) {
+        if let scheme = inferredSchemeIfHostURL(trimmed), let url = URL(string: scheme + trimmed) {
+            return url
+        }
+
+        let searx = normalizeSearXNGURL(searchBaseURL)
+        if !searx.isEmpty {
+            let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
+            if searx.contains("{query}"),
+               let url = URL(string: searx.replacingOccurrences(of: "{query}", with: encoded)) {
                 return url
+            }
+            if var comps = URLComponents(string: searx + "/search") {
+                comps.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+                if let url = comps.url {
+                    return url
+                }
             }
         }
 

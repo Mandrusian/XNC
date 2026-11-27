@@ -1,11 +1,11 @@
 (() => {
-  if (typeof window.__sncZapperCleanup === 'function') {
-    window.__sncZapperCleanup();
+  if (typeof window.__xncZapperCleanup === 'function') {
+    window.__xncZapperCleanup();
     return 'off';
   }
 
   const overlay = document.createElement('div');
-  overlay.id = '__snc-zapper-overlay';
+  overlay.id = '__xnc-zapper-overlay';
   Object.assign(overlay.style, {
     position: 'fixed',
     pointerEvents: 'none',
@@ -19,7 +19,7 @@
   });
 
   const hud = document.createElement('div');
-  hud.id = '__snc-zapper-hud';
+  hud.id = '__xnc-zapper-hud';
   Object.assign(hud.style, {
     position: 'fixed',
     bottom: '14px',
@@ -37,7 +37,7 @@
     pointerEvents: 'none',
     whiteSpace: 'nowrap'
   });
-  hud.textContent = 'Zapper · Click: Zap | Shift+Click: Hide Forever | U: Undo | Esc: Done';
+  hud.textContent = 'XNC Zapper · Click: Zap | Shift+Click: Hide Always | U: Undo | Esc: Done';
 
   document.documentElement.appendChild(overlay);
   document.documentElement.appendChild(hud);
@@ -94,14 +94,14 @@
   function persistRule(host, selector) {
     if (!selector) return;
     const style = document.createElement('style');
-    style.setAttribute('data-snc-zapper', '1');
+    style.setAttribute('data-xnc-zapper', '1');
     style.textContent = selector + ' { display: none !important; }';
     (document.head || document.documentElement).appendChild(style);
 
     const payload = JSON.stringify({ type: 'zapper', host: host || '', selector });
     try {
-      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.sncZapper) {
-        window.webkit.messageHandlers.sncZapper.postMessage(payload);
+      if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.xncZapper) {
+        window.webkit.messageHandlers.xncZapper.postMessage(payload);
       } else if (window.chrome && window.chrome.webview) {
         window.chrome.webview.postMessage(payload);
       }
@@ -167,10 +167,10 @@
     document.removeEventListener('keydown', onKey, true);
     overlay.remove();
     hud.remove();
-    delete window.__sncZapperCleanup;
+    delete window.__xncZapperCleanup;
   }
 
-  window.__sncZapperCleanup = cleanup;
+  window.__xncZapperCleanup = cleanup;
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('click', onClick, true);
   document.addEventListener('keydown', onKey, true);

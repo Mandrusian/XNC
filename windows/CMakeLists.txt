@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(snc_windows VERSION 0.1.0 LANGUAGES CXX)
+project(xnc_windows VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,14 +19,14 @@ else()
     set(WEBVIEW2_ARCH "x86")
 endif()
 
-add_executable(snc WIN32 src/main.cpp)
+add_executable(xnc WIN32 src/main.cpp)
 
-target_include_directories(snc PRIVATE
+target_include_directories(xnc PRIVATE
     "${WEBVIEW2_DIR}/build/native/include"
 )
 
-target_link_libraries(snc PRIVATE
-    snc_core
+target_link_libraries(xnc PRIVATE
+    xnc_core
     "${WEBVIEW2_DIR}/build/native/${WEBVIEW2_ARCH}/WebView2LoaderStatic.lib"
     user32
     gdi32
@@ -37,7 +37,7 @@ target_link_libraries(snc PRIVATE
     version
 )
 
-target_compile_definitions(snc PRIVATE UNICODE _UNICODE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_compile_definitions(xnc PRIVATE UNICODE _UNICODE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
-    target_compile_options(snc PRIVATE /W4 /EHsc)
+    target_compile_options(xnc PRIVATE /W4 /EHsc)
 endif()

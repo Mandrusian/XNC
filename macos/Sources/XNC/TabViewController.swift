@@ -1,5 +1,5 @@
 import AppKit
-import SNCCore
+import XNCCore
 import WebKit
 
 private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
@@ -56,12 +56,13 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.webView.allowsBackForwardNavigationGestures = true
+        self.webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
         if #available(macOS 13.3, *) {
             self.webView.isInspectable = true
         }
         super.init(nibName: nil, bundle: nil)
 
-        config.userContentController.add(WeakScriptMessageHandler(self), name: "sncZapper")
+        config.userContentController.add(WeakScriptMessageHandler(self), name: "xncZapper")
         self.webView.navigationDelegate = self
         self.webView.uiDelegate = self
         installObservers()
@@ -78,7 +79,7 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     deinit {
         observations.forEach { $0.invalidate() }
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "sncZapper")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "xncZapper")
     }
 
     override func loadView() {
@@ -102,7 +103,12 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         if enabled, let ruleList {
             controller.add(ruleList)
         }
-        injectCosmeticRules()
+        injectCosmeticAndMica()
+    }
+
+    func applyTransparentMica(_ enabled: Bool) {
+        webView.setValue(!enabled, forKey: "drawsBackground")
+        webView.evaluateJavaScript(ContentBlockerRules.transparentMicaScript(enabled: enabled), completionHandler: nil)
     }
 
     func toggleJavaScript() {
@@ -126,7 +132,7 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         }
     }
 
-    func injectCosmeticRules() {
+    func injectCosmeticAndMica() {
         let host = webView.url?.host ?? ""
         let css = ContentBlockerRules.cssForHost(
             host,
@@ -135,13 +141,16 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             bundle: Bundle.main
         )
         webView.evaluateJavaScript(ContentBlockerRules.injectCSSScript(css), completionHandler: nil)
+        webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
+        if store.transparentWebsites {
+            webView.evaluateJavaScript(ContentBlockerRules.transparentMicaScript(enabled: true), completionHandler: nil)
+        }
     }
 
     func openInspectorWindow() {
         if #available(macOS 13.3, *) {
             webView.isInspectable = true
         }
-        // Trigger WebKit's built-in inspector if available in private responder chain, otherwise show a quick JS console/inspector hint.
         let sel = Selector(("_inspector"))
         if webView.responds(to: sel), let inspector = webView.perform(sel)?.takeUnretainedValue() as? NSObject {
             let showSel = Selector(("show:"))
@@ -152,12 +161,12 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         }
         let alert = NSAlert()
         alert.messageText = "Web Inspector Enabled"
-        alert.informativeText = "Right-click anywhere on the page and choose \"Inspect Element\", or attach Safari -> Develop -> SNC."
+        alert.informativeText = "Right-click anywhere on the page and choose \"Inspect Element\", or attach Safari -> Develop -> XNC."
         alert.runModal()
     }
 
     func handleScriptMessage(_ message: WKScriptMessage) {
-        guard message.name == "sncZapper",
+        guard message.name == "xncZapper",
               let raw = message.body as? String,
               let data = raw.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -231,11 +240,11 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        injectCosmeticRules()
+        injectCosmeticAndMica()
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        injectCosmeticRules()
+        injectCosmeticAndMica()
         guard let url = webView.url else { return }
         let title = webView.title ?? url.absoluteString
         state.urlString = url.absoluteString

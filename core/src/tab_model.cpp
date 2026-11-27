@@ -1,6 +1,6 @@
-#include "snc/tab_model.hpp"
+#include "xnc/tab_model.hpp"
 
-namespace snc {
+namespace xnc {
 
 std::uint64_t TabModel::open_tab(std::string url, bool is_private, std::string title) {
     if (title.empty()) {
@@ -73,4 +73,4 @@ std::optional<size_t> TabModel::index_of(std::uint64_t id) const {
     return std::nullopt;
 }
 
-} // namespace snc
+} // namespace xnc

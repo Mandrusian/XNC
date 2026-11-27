@@ -1,5 +1,5 @@
 import AppKit
-import SNCCore
+import XNCCore
 import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -24,11 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newTabAction(_ sender: Any?) {
-        activeWindow()?.addTab(url: URLResolver.defaultHomeURL, isPrivate: false)
+        activeWindow()?.addTab(url: URLResolver.homeURL(searchBaseURL: store.searchEngineURL), isPrivate: false)
     }
 
     @objc func newPrivateTabAction(_ sender: Any?) {
-        activeWindow()?.addTab(url: URLResolver.defaultHomeURL, isPrivate: true)
+        activeWindow()?.addTab(url: URLResolver.homeURL(searchBaseURL: store.searchEngineURL), isPrivate: true)
     }
 
     @objc func closeTabAction(_ sender: Any?) {
@@ -70,6 +70,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func toggleZapperAction(_ sender: Any?) {
         activeWindow()?.toggleZapper()
+    }
+
+    @objc func toggleTransparentMicaAction(_ sender: Any?) {
+        let next = !store.transparentWebsites
+        store.setTransparentWebsites(next)
+        for win in windows {
+            win.applyTransparentMica(next)
+        }
+    }
+
+    @objc func configureSearchEngineAction(_ sender: Any?) {
+        activeWindow()?.configureSearchEngine()
+    }
+
+    func refreshSearchEngineUI() {
+        for win in windows {
+            win.syncSearchPlaceholder()
+        }
     }
 
     @objc func openWebInspectorAction(_ sender: Any?) {
@@ -153,10 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About SNC", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About XNC", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Search Engine (SearXNG)…", action: #selector(configureSearchEngineAction(_:)), keyEquivalent: ",")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide SNC", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit SNC", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Hide XNC", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit XNC", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
 
         let fileMenuItem = NSMenuItem()
@@ -197,6 +216,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let zapperItem = NSMenuItem(title: "Element Zapper", action: #selector(toggleZapperAction(_:)), keyEquivalent: "Z")
         zapperItem.keyEquivalentModifierMask = [.command, .shift]
         viewMenu.addItem(zapperItem)
+        let micaItem = NSMenuItem(title: "Transparent Mica Websites", action: #selector(toggleTransparentMicaAction(_:)), keyEquivalent: "M")
+        micaItem.keyEquivalentModifierMask = [.command, .shift]
+        viewMenu.addItem(micaItem)
         viewMenu.addItem(.separator())
         let nextTab = NSMenuItem(title: "Next Tab", action: #selector(nextTabAction(_:)), keyEquivalent: "\t")
         nextTab.keyEquivalentModifierMask = [.control]

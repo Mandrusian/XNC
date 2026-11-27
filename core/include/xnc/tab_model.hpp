@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace snc {
+namespace xnc {
 
 struct TabInfo {
     std::uint64_t id = 0;
@@ -38,4 +38,4 @@ private:
     std::optional<size_t> active_index_;
 };
 
-} // namespace snc
+} // namespace xnc

@@ -1,4 +1,4 @@
-name: SNC CI
+name: XNC CI
 
 on:
   push:
@@ -13,16 +13,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run C++ core tests
         run: |
-          cmake -S core -B core/build
+          cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
           cmake --build core/build
           ctest --test-dir core/build --output-on-failure
-      - name: Run Swift tests & package SNC.app
+      - name: Run Swift tests & package XNC.app
         run: |
           cd macos
           swift test
           chmod +x scripts/package_app.sh
           ./scripts/package_app.sh
-          SIZE_BYTES=$(stat -f%z dist/SNC.app/Contents/MacOS/SNC)
+          SIZE_BYTES=$(stat -f%z dist/XNC.app/Contents/MacOS/XNC)
           echo "macOS binary size: $SIZE_BYTES bytes"
           test "$SIZE_BYTES" -lt 20971520
 
@@ -39,12 +39,12 @@ jobs:
           cmake -S core -B core/build -DCMAKE_BUILD_TYPE=Release
           cmake --build core/build
           ctest --test-dir core/build --output-on-failure
-      - name: Build Linux SNC browser
+      - name: Build Linux XNC browser
         run: |
           cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release
           cmake --build linux/build
-          ls -lh linux/build/snc
-          SIZE_BYTES=$(stat -c%s linux/build/snc)
+          ls -lh linux/build/xnc
+          SIZE_BYTES=$(stat -c%s linux/build/xnc)
           echo "Linux binary size: $SIZE_BYTES bytes"
           test "$SIZE_BYTES" -lt 20971520
 
@@ -59,10 +59,10 @@ jobs:
           cmake -S core -B core/build
           cmake --build core/build --config Release
           ctest --test-dir core/build -C Release --output-on-failure
-      - name: Build Windows SNC browser
+      - name: Build Windows XNC browser
         run: |
           cmake -S windows -B windows/build
           cmake --build windows/build --config Release
-          $bin = Get-Item windows/build/Release/snc.exe
+          $bin = Get-Item windows/build/Release/xnc.exe
           Write-Host "Windows binary size: $($bin.Length) bytes"
           if ($bin.Length -ge 20971520) { exit 1 }

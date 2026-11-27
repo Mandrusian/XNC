@@ -22,7 +22,7 @@ public struct HistoryEntry: Codable, Equatable {
     }
 }
 
-/// Lightweight JSON persistence for bookmarks, non-private history, allowlisted sites, and zapper selectors.
+/// Lightweight JSON persistence for bookmarks, history, allowlist, zapper selectors, SearXNG, and Mica toggle.
 public final class BrowserStore {
     public static let maxHistoryEntries = 500
 
@@ -31,6 +31,8 @@ public final class BrowserStore {
         var history: [HistoryEntry]
         var allowlistedHosts: [String]?
         var customSelectors: [String: [String]]?
+        var searchEngineURL: String?
+        var transparentWebsites: Bool?
     }
 
     public let directoryURL: URL
@@ -38,6 +40,8 @@ public final class BrowserStore {
     public private(set) var history: [HistoryEntry] = []
     public private(set) var allowlistedHosts: [String] = []
     public private(set) var customSelectors: [String: [String]] = [:]
+    public private(set) var searchEngineURL: String = ""
+    public private(set) var transparentWebsites: Bool = false
 
     private var storeFileURL: URL {
         directoryURL.appendingPathComponent("store.json")
@@ -51,7 +55,7 @@ public final class BrowserStore {
     public static func defaultDirectoryURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("SNC", isDirectory: true)
+        return base.appendingPathComponent("XNC", isDirectory: true)
     }
 
     public func load() {
@@ -63,6 +67,8 @@ public final class BrowserStore {
             self.history = snapshot.history
             self.allowlistedHosts = snapshot.allowlistedHosts ?? []
             self.customSelectors = snapshot.customSelectors ?? [:]
+            self.searchEngineURL = URLResolver.normalizeSearXNGURL(snapshot.searchEngineURL ?? "")
+            self.transparentWebsites = snapshot.transparentWebsites ?? false
         }
     }
 
@@ -72,7 +78,9 @@ public final class BrowserStore {
             bookmarks: bookmarks,
             history: history,
             allowlistedHosts: allowlistedHosts,
-            customSelectors: customSelectors
+            customSelectors: customSelectors,
+            searchEngineURL: searchEngineURL,
+            transparentWebsites: transparentWebsites
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted]
@@ -80,6 +88,16 @@ public final class BrowserStore {
         if let data = try? encoder.encode(snapshot) {
             try? data.write(to: storeFileURL, options: .atomic)
         }
+    }
+
+    public func setSearchEngineURL(_ raw: String) {
+        searchEngineURL = URLResolver.normalizeSearXNGURL(raw)
+        save()
+    }
+
+    public func setTransparentWebsites(_ enabled: Bool) {
+        transparentWebsites = enabled
+        save()
     }
 
     public func isBookmarked(url: String) -> Bool {

@@ -1,10 +1,9 @@
-#include "snc/url_resolver.hpp"
+#include "xnc/url_resolver.hpp"
 
 #include <algorithm>
 #include <cctype>
-#include <cstdio>
 
-namespace snc {
+namespace xnc {
 
 namespace {
 
@@ -124,10 +123,53 @@ std::string percent_encode(std::string_view input) {
     return out;
 }
 
-std::string resolve_input(std::string_view raw) {
+std::string normalize_searxng_base(std::string_view raw) {
+    std::string_view trimmed = trim_ascii(raw);
+    if (trimmed.empty()) return {};
+
+    std::string url;
+    if (starts_with_ci(trimmed, "http://") || starts_with_ci(trimmed, "https://")) {
+        url = std::string(trimmed);
+    } else if (std::string scheme = inferred_scheme_if_host_url(trimmed); !scheme.empty()) {
+        url = scheme + std::string(trimmed);
+    } else {
+        url = "https://" + std::string(trimmed);
+    }
+
+    if (url.find("{query}") != std::string::npos) {
+        return url;
+    }
+
+    while (url.size() > 8 && url.back() == '/') {
+        url.pop_back();
+    }
+    constexpr std::string_view kSearchSuffix = "/search";
+    if (url.size() > kSearchSuffix.size() &&
+        url.compare(url.size() - kSearchSuffix.size(), kSearchSuffix.size(), kSearchSuffix) == 0) {
+        url.erase(url.size() - kSearchSuffix.size());
+    }
+    return url;
+}
+
+std::string home_url_for_search_engine(std::string_view search_base_url) {
+    std::string norm = normalize_searxng_base(search_base_url);
+    if (norm.empty()) {
+        return std::string(kDefaultHomeUrl);
+    }
+    if (norm.find("{query}") != std::string::npos) {
+        auto scheme_end = norm.find("://");
+        if (scheme_end != std::string::npos) {
+            auto path_start = norm.find('/', scheme_end + 3);
+            return (path_start != std::string::npos) ? (norm.substr(0, path_start) + "/") : (norm + "/");
+        }
+    }
+    return norm + "/";
+}
+
+std::string resolve_input(std::string_view raw, std::string_view search_base_url) {
     std::string_view trimmed = trim_ascii(raw);
     if (trimmed.empty()) {
-        return std::string(kDefaultHomeUrl);
+        return home_url_for_search_engine(search_base_url);
     }
 
     if (starts_with_ci(trimmed, "http://") ||
@@ -141,7 +183,18 @@ std::string resolve_input(std::string_view raw) {
         return scheme + std::string(trimmed);
     }
 
-    return "https://duckduckgo.com/?q=" + percent_encode(trimmed);
+    std::string encoded = percent_encode(trimmed);
+    std::string searx = normalize_searxng_base(search_base_url);
+    if (!searx.empty()) {
+        auto pos = searx.find("{query}");
+        if (pos != std::string::npos) {
+            searx.replace(pos, 7, encoded);
+            return searx;
+        }
+        return searx + "/search?q=" + encoded;
+    }
+
+    return "https://duckduckgo.com/?q=" + encoded;
 }
 
 std::string extract_host(std::string_view url) {
@@ -158,7 +211,7 @@ std::string extract_host(std::string_view url) {
         s = s.substr(0, end);
     }
 
-    if (auto at = s.rfind('@'); at != std::string_view::npos) {
+    if (auto at = s.rfind('@'); at != std::string::npos) {
         s.remove_prefix(at + 1);
     }
 
@@ -186,4 +239,4 @@ std::string display_host(std::string_view url) {
     return host.empty() ? std::string(url) : host;
 }
 
-} // namespace snc
+} // namespace xnc
