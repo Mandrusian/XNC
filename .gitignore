@@ -6,6 +6,7 @@ linux/build/
 windows/build/
 macos/.build/
 macos/dist/
+windows/dist/
 dist/
 *.app/
 windows/packages/

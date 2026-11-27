@@ -4,6 +4,7 @@ project(xnc_windows VERSION 0.2.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../core ${CMAKE_CURRENT_BINARY_DIR}/core EXCLUDE_FROM_ALL)
 
@@ -40,4 +41,5 @@ target_link_libraries(xnc PRIVATE
 target_compile_definitions(xnc PRIVATE UNICODE _UNICODE NOMINMAX _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
     target_compile_options(xnc PRIVATE /W4 /EHsc)
+    target_link_options(xnc PRIVATE "/MANIFESTUAC:level='asInvoker' uiAccess='false'")
 endif()

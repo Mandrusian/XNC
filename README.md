@@ -10,6 +10,15 @@
 
 ## Quick Install
 
+### Windows (`XNC-Setup.exe` — No Admin / No UAC / No Build Tools)
+
+- **Installer:** Download and run [`XNC-Setup.exe`](https://github.com/Mandrusian/XNC/releases/latest/download/XNC-Setup.exe) from GitHub Releases (installs per-user to `%LOCALAPPDATA%\Programs\XNC`, zero admin rights or UAC prompt required).
+- **PowerShell one-liner (no admin, no build tools):**
+  ```powershell
+  irm https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-windows.ps1 | iex
+  ```
+- **Portable zip:** [`XNC-windows-x64.zip`](https://github.com/Mandrusian/XNC/releases/latest/download/XNC-windows-x64.zip)
+
 ### macOS (`Applications/XNC.app`)
 
 From GitHub directly:
@@ -18,7 +27,7 @@ From GitHub directly:
 curl -fsSL https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-macos.sh | bash
 ```
 
-Or from a local clone:
+Or download [`XNC-macos-arm64.zip`](https://github.com/Mandrusian/XNC/releases/latest/download/XNC-macos-arm64.zip) from Releases, or install from a local clone:
 
 ```bash
 ./scripts/install-macos.sh
@@ -26,7 +35,7 @@ Or from a local clone:
 
 ### Linux (`~/.local/bin/xnc` + desktop launcher)
 
-Requires `cmake`, `pkg-config`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev` (or equivalent distro packages):
+Requires `cmake`, `pkg-config`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev` (or grab [`XNC-linux-x64.tar.gz`](https://github.com/Mandrusian/XNC/releases/latest/download/XNC-linux-x64.tar.gz) from Releases):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-linux.sh | bash
@@ -36,20 +45,6 @@ Or from a local clone:
 
 ```bash
 ./scripts/install-linux.sh
-```
-
-### Windows (`%LOCALAPPDATA%\XNC\xnc.exe` + Start Menu shortcut)
-
-Requires CMake and Visual Studio C++ Build Tools:
-
-```powershell
-irm https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-windows.ps1 | iex
-```
-
-Or from a local clone:
-
-```powershell
-.\scripts\install-windows.ps1
 ```
 
 ## Features
