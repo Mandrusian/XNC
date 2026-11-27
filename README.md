@@ -6,6 +6,50 @@
 - **Linux:** C++20 + GTK3 `GtkHeaderBar` + `WebKit2GTK 4.1`
 - **Windows:** C++20 + Win32 + `WebView2` + Windows 11 Mica backdrop (`DwmSetWindowAttribute`)
 
+## Quick Install
+
+### macOS (`Applications/XNC.app`)
+
+From GitHub directly:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-macos.sh | bash
+```
+
+Or from a local clone:
+
+```bash
+./scripts/install-macos.sh
+```
+
+### Linux (`~/.local/bin/xnc` + desktop launcher)
+
+Requires `cmake`, `pkg-config`, `libgtk-3-dev`, and `libwebkit2gtk-4.1-dev` (or equivalent distro packages):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-linux.sh | bash
+```
+
+Or from a local clone:
+
+```bash
+./scripts/install-linux.sh
+```
+
+### Windows (`%LOCALAPPDATA%\XNC\xnc.exe` + Start Menu shortcut)
+
+Requires CMake and Visual Studio C++ Build Tools:
+
+```powershell
+irm https://raw.githubusercontent.com/Mandrusian/XNC/main/scripts/install-windows.ps1 | iex
+```
+
+Or from a local clone:
+
+```powershell
+.\scripts\install-windows.ps1
+```
+
 ## Features
 
 - **Custom SearXNG Support (`Cmd+,` on macOS / `☰` menu everywhere):** Point XNC at any self-hosted or public SearXNG instance (e.g., `https://searx.example.com`, `http://localhost:8080`, or custom `{query}` template), or fall back to DuckDuckGo anytime.
@@ -31,7 +75,7 @@
 | Transparent Mica Websites | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Web Inspector / Console / Source | `Cmd+Opt+I` / `J` / `U` | `Ctrl+Shift+I` or `F12` |
 
-## Build & Run
+## Build & Run Manually
 
 ### Shared C++20 Core Tests (all platforms)
 
@@ -52,8 +96,6 @@ open dist/XNC.app
 
 ### Linux (`linux/`)
 
-Requires `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, and `pkg-config`.
-
 ```bash
 cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release
 cmake --build linux/build
@@ -61,8 +103,6 @@ cmake --build linux/build
 ```
 
 ### Windows (`windows/`)
-
-Requires Visual Studio C++ build tools, CMake, and the `Microsoft.Web.WebView2` NuGet package.
 
 ```powershell
 nuget install Microsoft.Web.WebView2 -OutputDirectory windows/packages -ExcludeVersion
