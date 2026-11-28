@@ -64,6 +64,7 @@ import site
     Write-Host "-> Copying SearXNG package + launcher..."
     Copy-Item (Join-Path $SrcDir "searx") (Join-Path $SearxDir "searx") -Recurse -Force
     Copy-Item (Join-Path $RepoRoot "shared\run_searxng.py") (Join-Path $OutDir "run_searxng.py") -Force
+    Copy-Item (Join-Path $RepoRoot "shared\search.html") (Join-Path $OutDir "search.html") -Force
 
     Write-Host "-> Pruning caches and tests..."
     Get-ChildItem $OutDir -Recurse -Directory -Force | Where-Object {

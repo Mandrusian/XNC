@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>XNC Search</title>
+<style>
+  :root {
+    --bg: #000000;
+    --surface: #0b0b0c;
+    --surface-hover: #131316;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.18);
+    --text: #ffffff;
+    --text-2: rgba(255, 255, 255, 0.58);
+    --text-3: rgba(255, 255, 255, 0.32);
+    --flow: cubic-bezier(0.16, 1, 0.3, 1);
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --mono: "SF Mono", "Cascadia Mono", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    transition: background 0.5s var(--flow);
+  }
+
+  body.mica {
+    --surface: rgba(255, 255, 255, 0.045);
+    --surface-hover: rgba(255, 255, 255, 0.085);
+    --border: rgba(255, 255, 255, 0.09);
+    background: transparent !important;
+  }
+
+  /* Top Sticky Header */
+  .top {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    padding: 18px 28px 0;
+    background: rgba(0, 0, 0, 0.84);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  body.mica .top {
+    background: rgba(10, 10, 14, 0.38);
+  }
+
+  .top-inner {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  .search-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    opacity: 0.9;
+    flex-shrink: 0;
+    transition: opacity 0.35s var(--flow);
+  }
+  .brand:hover { opacity: 1; }
+  .brand svg { width: 34px; height: auto; display: block; }
+
+  .search-form {
+    flex: 1;
+    max-width: 600px;
+    display: flex;
+    align-items: center;
+    height: 42px;
+    padding: 0 10px 0 14px;
+    border-radius: 11px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    transition: border-color 0.4s var(--flow), background 0.4s var(--flow);
+  }
+  .search-form:focus-within {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.28);
+  }
+  .search-in {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    font: 400 14.5px/1.2 var(--sans);
+  }
+  .search-in::placeholder { color: var(--text-3); }
+  .search-clear, .search-go {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-3);
+    font: 400 15px/1 var(--sans);
+    padding: 6px 7px;
+    cursor: pointer;
+    transition: color 0.3s var(--flow), transform 0.4s var(--flow);
+  }
+  .search-clear:hover, .search-go:hover { color: var(--text); }
+  .search-go:hover { transform: translateX(2px); }
+
+  /* Flowy Category Tabs */
+  .cats {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 12px;
+    padding-bottom: 10px;
+  }
+  .cat-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 1.5px;
+    background: #ffffff;
+    will-change: transform, width;
+    pointer-events: none;
+  }
+  .cat-btn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--text-3);
+    font: 400 12.5px/1 var(--sans);
+    padding: 7px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    transition: color 0.35s var(--flow), background 0.35s var(--flow);
+  }
+  .cat-btn:hover { color: var(--text-2); background: var(--surface); }
+  .cat-btn.active { color: var(--text); font-weight: 500; }
+
+  /* Main Layout */
+  .wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 28px 64px;
+    display: grid;
+    grid-template-columns: minmax(0, 660px) minmax(0, 1fr);
+    gap: 32px;
+    align-items: start;
+  }
+  .wrap.wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .meta-line {
+    font: 400 11.5px/1 var(--mono);
+    color: var(--text-3);
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* Results List */
+  .results {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .card {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    margin: 0 -16px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    text-decoration: none;
+    color: inherit;
+    opacity: 0;
+    transform: translateY(8px);
+    animation: rise 0.48s var(--flow) forwards;
+    transition: background 0.4s var(--flow), border-color 0.4s var(--flow);
+  }
+  .card:hover {
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  @keyframes rise {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .card-body { flex: 1; min-width: 0; }
+  .card-host {
+    font: 400 11.5px/1.2 var(--mono);
+    color: var(--text-3);
+    margin-bottom: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-title {
+    font: 500 16px/1.35 var(--sans);
+    color: var(--text);
+    margin: 0 0 5px;
+    letter-spacing: -0.01em;
+  }
+  .card:hover .card-title { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,0.35); }
+  .card-desc {
+    font: 400 13.5px/1.55 var(--sans);
+    color: var(--text-2);
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-engines {
+    margin-top: 7px;
+    font: 400 10.5px/1 var(--mono);
+    color: var(--text-3);
+    opacity: 0.65;
+    transition: opacity 0.35s var(--flow);
+  }
+  .card:hover .card-engines { opacity: 1; }
+
+  .card-thumb {
+    width: 84px;
+    height: 62px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  /* Images Grid */
+  .img-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .img-card {
+    display: flex;
+    flex-direction: column;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    opacity: 0;
+    transform: translateY(8px);
+    animation: rise 0.48s var(--flow) forwards;
+    transition: border-color 0.35s var(--flow), transform 0.45s var(--flow);
+  }
+  .img-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+  .img-card img { width: 100%; height: 140px; object-fit: cover; display: block; background: #0a0a0c; }
+  .img-cap { padding: 8px 10px; font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Infobox Sidebar */
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .infobox {
+    padding: 18px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    opacity: 0;
+    transform: translateY(8px);
+    animation: rise 0.55s var(--flow) forwards;
+  }
+  .infobox h2 { font: 500 17px/1.3 var(--sans); margin: 0 0 8px; }
+  .infobox p { font: 400 13px/1.55 var(--sans); color: var(--text-2); margin: 0 0 12px; }
+  .infobox-links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .infobox-link {
+    font: 400 11.5px/1 var(--sans);
+    color: var(--text-2);
+    text-decoration: none;
+    padding: 6px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    transition: color 0.3s var(--flow), border-color 0.3s var(--flow);
+  }
+  .infobox-link:hover { color: #fff; border-color: var(--border-hover); }
+
+  /* Skeleton Loading */
+  .skel {
+    padding: 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .skel-line {
+    height: 12px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--surface) 25%, var(--surface-hover) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Pagination */
+  .pager {
+    margin-top: 26px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pager-btn {
+    appearance: none;
+    height: 34px;
+    padding: 0 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    font: 400 12.5px/1 var(--sans);
+    cursor: pointer;
+    transition: color 0.35s var(--flow), background 0.35s var(--flow), border-color 0.35s var(--flow);
+  }
+  .pager-btn:hover:not(:disabled) { color: #fff; background: var(--surface-hover); border-color: var(--border-hover); }
+  .pager-btn:disabled { opacity: 0.35; cursor: default; }
+
+  .empty {
+    padding: 40px 0;
+    color: var(--text-2);
+    font-size: 14px;
+  }
+
+  @media (max-width: 820px) {
+    .wrap { grid-template-columns: 1fr; }
+    .side { order: -1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="search-row">
+        <a class="brand" href="/" title="XNC Search">
+          <svg viewBox="240 240 544 544" aria-hidden="true">
+            <g fill="#FFFFFF">
+              <polygon points="252,252 288,252 404,772 368,772"/>
+              <polygon points="368,252 404,252 288,772 252,772"/>
+              <rect x="436" y="252" width="30" height="520"/>
+              <rect x="558" y="252" width="30" height="520"/>
+              <polygon points="436,252 468,252 588,772 556,772"/>
+              <path d="M 757 355 L 757 308 Q 757 267 696 267 Q 635 267 635 308 L 635 716 Q 635 757 696 757 Q 757 757 757 716 L 757 669"
+                    fill="none" stroke="#FFFFFF" stroke-width="30" stroke-linecap="butt"/>
+            </g>
+          </svg>
+        </a>
+        <form class="search-form" id="searchForm">
+          <input class="search-in" id="qInput" placeholder="Search" autocomplete="off" />
+          <button type="button" class="search-clear" id="clearBtn" aria-label="Clear">×</button>
+          <button type="submit" class="search-go" aria-label="Search">→</button>
+        </form>
+      </div>
+
+      <nav class="cats" id="cats">
+        <div class="cat-bar" id="catBar"></div>
+        <button class="cat-btn active" data-cat="general">All</button>
+        <button class="cat-btn" data-cat="images">Images</button>
+        <button class="cat-btn" data-cat="videos">Videos</button>
+        <button class="cat-btn" data-cat="news">News</button>
+        <button class="cat-btn" data-cat="it">Code</button>
+        <button class="cat-btn" data-cat="science">Science</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap" id="wrap">
+    <section>
+      <div class="meta-line" id="metaLine"><span>Searching…</span><span></span></div>
+      <div id="resultsHost"></div>
+      <div class="pager" id="pager" style="display:none">
+        <button class="pager-btn" id="prevBtn">← Previous</button>
+        <span style="font:400 12px/1 var(--mono);color:var(--text-3)" id="pageLabel">Page 1</span>
+        <button class="pager-btn" id="nextBtn">Next →</button>
+      </div>
+    </section>
+    <aside class="side" id="side"></aside>
+  </main>
+
+<script>
+(() => {
+  window.__xncApplyMica = (enabled) => {
+    document.body.classList.toggle('mica', Boolean(enabled));
+  };
+
+  const params = new URLSearchParams(window.location.search);
+  let query = (params.get('q') || '').trim();
+  let category = params.get('categories') || 'general';
+  let page = Math.max(1, parseInt(params.get('pageno') || '1', 10) || 1);
+
+  const qInput = document.getElementById('qInput');
+  const clearBtn = document.getElementById('clearBtn');
+  const metaLine = document.getElementById('metaLine');
+  const resultsHost = document.getElementById('resultsHost');
+  const side = document.getElementById('side');
+  const wrap = document.getElementById('wrap');
+  const pager = document.getElementById('pager');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const pageLabel = document.getElementById('pageLabel');
+
+  qInput.value = query;
+  clearBtn.addEventListener('click', () => { qInput.value = ''; qInput.focus(); });
+
+  // Flowy underline bar for category tabs
+  const catBtns = [...document.querySelectorAll('.cat-btn')];
+  const catBar = document.getElementById('catBar');
+  let bx = 0, bw = 36, tx = 0, tw = 36, anim = false;
+  function stepBar() {
+    bx += (tx - bx) * 0.14;
+    bw += (tw - bw) * 0.14;
+    catBar.style.transform = `translate3d(${bx.toFixed(2)}px,0,0)`;
+    catBar.style.width = `${bw.toFixed(2)}px`;
+    if (Math.abs(tx - bx) > 0.2 || Math.abs(tw - bw) > 0.2) requestAnimationFrame(stepBar);
+    else anim = false;
+  }
+  function syncCatBar(instant) {
+    const active = catBtns.find(b => b.dataset.cat === category) || catBtns[0];
+    catBtns.forEach(b => b.classList.toggle('active', b === active));
+    tx = active.offsetLeft + 10;
+    tw = Math.max(16, active.offsetWidth - 20);
+    if (instant) { bx = tx; bw = tw; catBar.style.transform = `translate3d(${bx}px,0,0)`; catBar.style.width = `${bw}px`; }
+    else if (!anim) { anim = true; requestAnimationFrame(stepBar); }
+  }
+  catBtns.forEach(b => b.addEventListener('click', () => {
+    category = b.dataset.cat;
+    page = 1;
+    syncCatBar(false);
+    pushAndSearch();
+  }));
+  window.addEventListener('resize', () => syncCatBar(true));
+
+  function hostText(url) {
+    try {
+      const u = new URL(url);
+      const path = u.pathname === '/' ? '' : u.pathname.replace(/\/$/, '');
+      return u.host.replace(/^www\./, '') + (path.length > 36 ? path.slice(0, 36) + '…' : path);
+    } catch { return url; }
+  }
+
+  function showSkeleton() {
+    side.innerHTML = '';
+    pager.style.display = 'none';
+    resultsHost.innerHTML = Array.from({ length: 5 }, () => `
+      <div class="skel">
+        <div class="skel-line" style="width:28%;height:10px;"></div>
+        <div class="skel-line" style="width:62%;height:15px;"></div>
+        <div class="skel-line" style="width:92%;"></div>
+        <div class="skel-line" style="width:74%;"></div>
+      </div>`).join('');
+  }
+
+  function pushAndSearch() {
+    const next = new URLSearchParams();
+    if (query) next.set('q', query);
+    if (category && category !== 'general') next.set('categories', category);
+    if (page > 1) next.set('pageno', String(page));
+    history.replaceState(null, '', '/search?' + next.toString());
+    runSearch();
+  }
+
+  async function runSearch() {
+    if (!query) {
+      document.title = 'XNC Search';
+      metaLine.innerHTML = '<span>Enter a query above</span><span></span>';
+      resultsHost.innerHTML = '';
+      side.innerHTML = '';
+      pager.style.display = 'none';
+      return;
+    }
+
+    document.title = `${query} — XNC Search`;
+    const t0 = performance.now();
+    metaLine.innerHTML = '<span>Searching…</span><span></span>';
+    showSkeleton();
+
+    try {
+      const api = `/search?q=${encodeURIComponent(query)}&categories=${encodeURIComponent(category)}&pageno=${page}&format=json`;
+      const res = await fetch(api);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+      const items = Array.isArray(data.results) ? data.results : [];
+      const infoboxes = Array.isArray(data.infoboxes) ? data.infoboxes : [];
+
+      metaLine.innerHTML = `<span>${items.length} results · ${elapsed}s</span><span>page ${page}</span>`;
+
+      if (items.length === 0) {
+        wrap.classList.add('wide');
+        resultsHost.innerHTML = `<div class="empty">No results for "${query.replace(/</g, '&lt;')}".</div>`;
+        pager.style.display = page > 1 ? 'flex' : 'none';
+        return;
+      }
+
+      if (category === 'images') {
+        wrap.classList.add('wide');
+        const grid = document.createElement('div');
+        grid.className = 'img-grid';
+        items.forEach((r, idx) => {
+          const src = r.thumbnail_src || r.img_src || '';
+          if (!src) return;
+          const a = document.createElement('a');
+          a.className = 'img-card';
+          a.href = r.url || r.img_src || '#';
+          a.style.animationDelay = `${Math.min(idx, 12) * 28}ms`;
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.src = src;
+          img.alt = r.title || '';
+          const cap = document.createElement('div');
+          cap.className = 'img-cap';
+          cap.textContent = r.title || hostText(r.url || '');
+          a.append(img, cap);
+          grid.appendChild(a);
+        });
+        resultsHost.innerHTML = '';
+        resultsHost.appendChild(grid);
+      } else {
+        wrap.classList.toggle('wide', infoboxes.length === 0);
+        const list = document.createElement('div');
+        list.className = 'results';
+        items.forEach((r, idx) => {
+          const a = document.createElement('a');
+          a.className = 'card';
+          a.href = r.url || '#';
+          a.style.animationDelay = `${Math.min(idx, 10) * 30}ms`;
+
+          const body = document.createElement('div');
+          body.className = 'card-body';
+
+          const host = document.createElement('div');
+          host.className = 'card-host';
+          host.textContent = hostText(r.url || '');
+
+          const title = document.createElement('h3');
+          title.className = 'card-title';
+          title.textContent = r.title || r.url || 'Untitled';
+
+          const desc = document.createElement('p');
+          desc.className = 'card-desc';
+          desc.textContent = r.content || '';
+
+          const eng = document.createElement('div');
+          eng.className = 'card-engines';
+          const engines = Array.isArray(r.engines) ? r.engines : (r.engine ? [r.engine] : []);
+          eng.textContent = engines.join(' · ');
+
+          body.append(host, title);
+          if (r.content) body.appendChild(desc);
+          if (engines.length) body.appendChild(eng);
+          a.appendChild(body);
+
+          const thumbSrc = r.thumbnail || r.img_src || '';
+          if (thumbSrc && /^https?:\/\//i.test(thumbSrc)) {
+            const img = document.createElement('img');
+            img.className = 'card-thumb';
+            img.loading = 'lazy';
+            img.src = thumbSrc;
+            img.alt = '';
+            img.onerror = () => img.remove();
+            a.appendChild(img);
+          }
+
+          list.appendChild(a);
+        });
+        resultsHost.innerHTML = '';
+        resultsHost.appendChild(list);
+
+        side.innerHTML = '';
+        infoboxes.slice(0, 2).forEach(box => {
+          const div = document.createElement('div');
+          div.className = 'infobox';
+          const h2 = document.createElement('h2');
+          h2.textContent = box.infobox || '';
+          const p = document.createElement('p');
+          p.textContent = box.content || '';
+          div.append(h2, p);
+          if (Array.isArray(box.urls) && box.urls.length) {
+            const links = document.createElement('div');
+            links.className = 'infobox-links';
+            box.urls.slice(0, 4).forEach(u => {
+              const lk = document.createElement('a');
+              lk.className = 'infobox-link';
+              lk.href = u.url;
+              lk.textContent = u.title || hostText(u.url);
+              links.appendChild(lk);
+            });
+            div.appendChild(links);
+          }
+          side.appendChild(div);
+        });
+      }
+
+      pager.style.display = 'flex';
+      prevBtn.disabled = page <= 1;
+      pageLabel.textContent = `Page ${page}`;
+    } catch (err) {
+      metaLine.innerHTML = '<span>Search error</span><span></span>';
+      resultsHost.innerHTML = `<div class="empty">Could not reach bundled SearXNG (${err.message}).</div>`;
+    }
+  }
+
+  document.getElementById('searchForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const v = qInput.value.trim();
+    if (!v) return;
+    query = v;
+    page = 1;
+    pushAndSearch();
+  });
+  prevBtn.addEventListener('click', () => { if (page > 1) { page--; pushAndSearch(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
+  nextBtn.addEventListener('click', () => { page++; pushAndSearch(); window.scrollTo({ top: 0, behavior: 'smooth' }); });
+
+  requestAnimationFrame(() => syncCatBar(true));
+  runSearch();
+})();
+</script>
+</body>
+</html>

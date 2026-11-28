@@ -43,6 +43,7 @@ uv pip install \
 echo "-> Copying SearXNG package + launcher..."
 cp -R "$WORK_TMP/searxng-src/searx" "$OUT_ABS/searxng/searx"
 cp "$REPO_ROOT/shared/run_searxng.py" "$OUT_ABS/run_searxng.py"
+cp "$REPO_ROOT/shared/search.html" "$OUT_ABS/search.html"
 
 echo "-> Slimming runtime caches, tests, and static docs..."
 find "$OUT_ABS" -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -prune -exec rm -rf {} +

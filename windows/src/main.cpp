@@ -528,6 +528,12 @@ void inject_cosmetic_and_mica(Tab* tab) {
         tab->webview->ExecuteScript(to_wide(js).c_str(), nullptr);
         return;
     }
+    if (!g_app.bundled_searxng_url.empty() && tab->url.rfind(g_app.bundled_searxng_url + "/search", 0) == 0) {
+        std::string js = std::string("if (typeof window.__xncApplyMica === 'function') window.__xncApplyMica(")
+            + (mica ? "true" : "false") + ");";
+        tab->webview->ExecuteScript(to_wide(js).c_str(), nullptr);
+        return;
+    }
 
     std::string host = xnc::extract_host(tab->url);
     bool shield_active = g_app.blocker.enabled() && !g_app.store.is_host_allowlisted(host);

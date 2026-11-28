@@ -125,10 +125,20 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         injectCosmeticAndMica()
     }
 
+    private func isBundledSearchPage(_ url: URL?) -> Bool {
+        guard let url, let bundled = delegate?.bundledSearchEngineURL, !bundled.isEmpty else { return false }
+        return url.absoluteString.hasPrefix(bundled + "/search")
+    }
+
     func applyTransparentMica(_ enabled: Bool) {
         webView.setValue(!enabled, forKey: "drawsBackground")
         if ContentBlockerRules.isNewTabURL(webView.url) {
             syncNewTabState()
+            return
+        }
+        if isBundledSearchPage(webView.url) {
+            let lit = enabled ? "true" : "false"
+            webView.evaluateJavaScript("if (typeof window.__xncApplyMica === 'function') window.__xncApplyMica(\(lit));", completionHandler: nil)
             return
         }
         webView.evaluateJavaScript(ContentBlockerRules.transparentMicaScript(enabled: enabled), completionHandler: nil)
@@ -173,6 +183,12 @@ final class TabViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         if ContentBlockerRules.isNewTabURL(webView.url) {
             webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
             syncNewTabState()
+            return
+        }
+        if isBundledSearchPage(webView.url) {
+            webView.setValue(!store.transparentWebsites, forKey: "drawsBackground")
+            let lit = store.transparentWebsites ? "true" : "false"
+            webView.evaluateJavaScript("if (typeof window.__xncApplyMica === 'function') window.__xncApplyMica(\(lit));", completionHandler: nil)
             return
         }
         let host = webView.url?.host ?? ""

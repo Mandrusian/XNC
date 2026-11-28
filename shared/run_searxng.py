@@ -108,7 +108,25 @@ def main() -> int:
     os.environ.setdefault("SEARXNG_URL", f"http://127.0.0.1:{args.port}/")
 
     import waitress
+    from flask import Response, request
     from searx import webapp
+
+    search_html_path = None
+    for candidate in (BASE_DIR / "search.html", BASE_DIR.parent / "shared" / "search.html"):
+        if candidate.is_file():
+            search_html_path = candidate
+            break
+
+    if search_html_path is not None:
+        search_html = search_html_path.read_text(encoding="utf-8")
+
+        @webapp.app.before_request
+        def _xnc_custom_search_ui():
+            if request.path == "/search" and request.method == "GET":
+                fmt = (request.args.get("format") or "").strip().lower()
+                if fmt in ("", "html") and request.args.get("raw") != "1":
+                    return Response(search_html, mimetype="text/html; charset=utf-8")
+            return None
 
     if args.check:
         print("XNC bundled SearXNG check OK:", getattr(webapp, "app", None) is not None)

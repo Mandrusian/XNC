@@ -48,6 +48,7 @@ if [[ -d "$MACOS_DIR/searxng-runtime" ]]; then
   echo "Bundling SearXNG runtime into $APP_DIR/Contents/Resources/searxng-runtime..."
   ditto "$MACOS_DIR/searxng-runtime" "$APP_DIR/Contents/Resources/searxng-runtime"
   cp "$REPO_ROOT/shared/run_searxng.py" "$APP_DIR/Contents/Resources/searxng-runtime/run_searxng.py"
+  cp "$REPO_ROOT/shared/search.html" "$APP_DIR/Contents/Resources/searxng-runtime/search.html"
 fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
